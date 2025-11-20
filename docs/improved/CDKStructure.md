@@ -13,11 +13,7 @@ nova-mme-demo/
 ├── lib/                              # CDK stack definitions
 │   ├── __init__.py
 │   ├── embedder_stack.py            # Embedder infrastructure stack
-│   ├── chatbot_stack.py             # Chatbot infrastructure stack
-│   └── constructs/                   # Reusable CDK constructs
-│       ├── __init__.py
-│       ├── s3_vector_index.py       # S3 Vector index construct
-│       └── nova_mme_lambda.py       # Lambda with Bedrock permissions
+│   └── chatbot_stack.py             # Chatbot infrastructure stack
 │
 ├── lambda/                           # Lambda function code
 │   ├── shared/                       # Shared utilities across Lambdas
@@ -47,9 +43,7 @@ nova-mme-demo/
 │           ├── requirements.txt
 │           └── search_strategies.py # Hierarchical search logic
 │
-├── stepfunctions/                    # Step Functions definitions
-│   └── embedder_workflow.json       # State machine definition
-│
+
 ├── frontend/                         # Amplify frontend
 │   ├── package.json
 │   ├── public/
@@ -123,9 +117,11 @@ numpy>=1.24.0
 - S3 bucket for input files (cic-multimedia-test)
 - S3 Vector bucket with 4 indexes (256d, 384d, 1024d, 3072d)
 - Three Lambda functions (processor, check_status, store_embeddings)
-- Step Functions state machine
+- Step Functions state machine (defined in CDK code, not separate JSON)
 - S3 event trigger for processor Lambda
 - IAM roles and permissions (Bedrock, S3, S3 Vector)
+
+**Note**: The Step Functions state machine is defined directly in CDK code using the `_create_state_machine()` method. This is cleaner than maintaining a separate JSON file and allows for type-safe Lambda references.
 
 **chatbot_stack.py** - Defines:
 - Query handler Lambda
@@ -133,11 +129,6 @@ numpy>=1.24.0
 - Amplify app hosting
 - IAM roles for Bedrock and S3 Vector access
 - Takes S3 Vector bucket as input from embedder stack
-
-**constructs/** - Reusable components:
-- Custom constructs for S3 Vector indexes
-- Lambda function construct with standard Bedrock permissions
-- Reduces code duplication
 
 ### lambda/ - Function Code
 
@@ -155,13 +146,6 @@ numpy>=1.24.0
 **chatbot/** - Query handler:
 - Single Lambda handling the full query pipeline
 - Modular search strategies (simple, hierarchical, comparison)
-
-### stepfunctions/
-
-**embedder_workflow.json** - State machine definition:
-- Orchestrates the three Lambda functions
-- Handles retries and error states
-- Passes metadata through execution state
 
 ### frontend/ - Amplify App
 
