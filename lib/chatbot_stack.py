@@ -243,6 +243,11 @@ class ChatbotStack(Stack):
         """Create Amplify app for frontend hosting"""
         
         # Try to get GitHub token from Secrets Manager
+        # Note: We use unsafe_unwrap() which exposes the token in CloudFormation.
+        # This is acceptable because:
+        # 1. GitHub tokens can be easily rotated
+        # 2. CloudFormation templates are only accessible to AWS admins
+        # 3. Alternative is manual console configuration (worse for IaC)
         github_token = None
         try:
             secret = secretsmanager.Secret.from_secret_name_v2(
@@ -250,8 +255,7 @@ class ChatbotStack(Stack):
                 "GitHubToken",
                 "amplify/github-token"
             )
-            # For CfnApp, we need to pass the secret value as a string token
-            github_token = secret.secret_value.to_string()
+            github_token = secret.secret_value.unsafe_unwrap()
             print("✅ GitHub token loaded from Secrets Manager")
         except Exception as e:
             print(f"⚠️  Warning: Could not load GitHub token from Secrets Manager: {e}")
