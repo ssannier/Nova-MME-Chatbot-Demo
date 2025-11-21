@@ -23,11 +23,15 @@ s3_client = boto3.client('s3')
 VECTOR_BUCKET = os.environ['VECTOR_BUCKET']
 EMBEDDING_MODEL_ID = os.environ['EMBEDDING_MODEL_ID']
 LLM_MODEL_ID = os.environ['LLM_MODEL_ID']
+LLM_REGION = os.environ.get('LLM_REGION', os.environ.get('AWS_REGION', 'us-east-1'))
 DEFAULT_DIMENSION = int(os.environ.get('DEFAULT_DIMENSION', '1024'))
 DEFAULT_K = int(os.environ.get('DEFAULT_K', '5'))
 HIERARCHICAL_ENABLED = os.environ.get('HIERARCHICAL_ENABLED', 'true').lower() == 'true'
 HIERARCHICAL_CONFIG = json.loads(os.environ.get('HIERARCHICAL_CONFIG', '{}'))
 VECTOR_INDEXES = json.loads(os.environ.get('VECTOR_INDEXES', '{}'))
+
+# Create region-specific Bedrock client for LLM if needed
+bedrock_runtime_llm = boto3.client('bedrock-runtime', region_name=LLM_REGION) if LLM_REGION != os.environ.get('AWS_REGION') else bedrock_runtime
 
 
 def handler(event, context):
@@ -413,7 +417,7 @@ def call_claude(prompt: str) -> str:
         ]
     }
     
-    response = bedrock_runtime.invoke_model(
+    response = bedrock_runtime_llm.invoke_model(
         modelId=LLM_MODEL_ID,
         body=json.dumps(request_body)
     )

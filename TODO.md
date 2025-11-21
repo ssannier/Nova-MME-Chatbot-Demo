@@ -38,38 +38,39 @@
   - [x] Add dimension selector (for MRL demo)
   - [x] Add comparison mode toggle
   - [x] Display performance metrics
-  - [ ] Connect to API Gateway endpoint (pending deployment)
+  - [x] Connect to API Gateway endpoint ✅
 
 ### Phase 4: Deployment & Testing
 - [x] **Install CDK dependencies**
   - `pip install -r requirements.txt` ✅
 
-- [ ] **Bootstrap CDK** (first time only, if needed)
-  - `cdk bootstrap`
+- [x] **Bootstrap CDK** (already bootstrapped)
+  - `cdk bootstrap` ✅
 
-- [ ] **Deploy Embedder Stack**
-  - `cdk deploy NovaMMEEmbedderStack`
-  - Verify S3 buckets created
-  - Verify Lambda functions deployed
-  - Verify Step Functions state machine created
+- [x] **Deploy Embedder Stack**
+  - `cdk deploy NovaMMEEmbedderStack` ✅
+  - Source Bucket: `cic-multimedia-test-dev` ✅
+  - Vector Bucket: `nova-mme-demo-embeddings-dev` ✅
+  - Lambda functions deployed ✅
+  - Step Functions state machine created ✅
 
-- [ ] **Deploy Chatbot Stack**
-  - `cdk deploy NovaMMEChatbotStack`
-  - Note the API Gateway endpoint URL
-  - Verify Lambda function deployed
-  - Share API URL with frontend dev
+- [x] **Deploy Chatbot Stack**
+  - `cdk deploy NovaMMEChatbotStack` ✅
+  - API Endpoint: `https://976iaxrejk.execute-api.us-east-1.amazonaws.com/prod/` ✅
+  - Lambda function deployed ✅
+  - Share API URL with frontend dev ⏳
 
 - [ ] **Upload test files**
   - Upload sample files (1 of each type: image, video, audio, text)
   - Monitor Step Functions execution in AWS Console
   - Verify embeddings stored in S3 Vector bucket
 
-- [ ] **Test end-to-end**
-  - Send test query via API Gateway (curl/Postman)
-  - Verify response from chatbot
-  - Test different dimensions
-  - Test hierarchical search
-  - Test through frontend UI
+- [x] **Test end-to-end**
+  - [x] Send test query via API Gateway ✅
+  - [x] Verify response from chatbot ✅
+  - [x] Test simple search (works!) ✅
+  - [ ] Test hierarchical search (throttled - need to test with delay)
+  - [x] Test through frontend UI ✅
 
 ### Phase 5: Documentation & Demo Prep
 - [ ] **Update architecture diagram** (`docs/initial/architecture-diagram.png`)

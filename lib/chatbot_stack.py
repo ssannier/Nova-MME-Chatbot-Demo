@@ -15,6 +15,7 @@ from aws_cdk import (
     aws_iam as iam,
     aws_apigateway as apigw,
     aws_s3 as s3,
+    aws_amplify as amplify,
     CfnOutput,
 )
 from constructs import Construct
@@ -49,12 +50,23 @@ class ChatbotStack(Stack):
         # Create API Gateway
         self.api = self._create_api_gateway()
 
+        # Create Amplify app for frontend hosting
+        self.amplify_app = self._create_amplify_app()
+
         # Output API endpoint
         CfnOutput(
             self,
             "ApiEndpoint",
             value=self.api.url,
             description="API Gateway endpoint for chatbot queries",
+        )
+        
+        # Output Amplify app URL
+        CfnOutput(
+            self,
+            "AmplifyAppUrl",
+            value=f"https://main.{self.amplify_app.attr_app_id}.amplifyapp.com",
+            description="Amplify frontend URL (connect GitHub in console to activate)",
         )
 
     def _load_config(self) -> dict:
@@ -104,16 +116,16 @@ class ChatbotStack(Stack):
         )
 
         # Bedrock permissions for embeddings and LLM
+        # Note: Using * for region because inference profiles can route to any region
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
                     "bedrock:InvokeModel",
                     "bedrock:InvokeModelWithResponseStream",
-                    "bedrock-runtime:InvokeModel",
-                    "bedrock-runtime:InvokeModelWithResponseStream",
                 ],
                 resources=[
-                    f"arn:aws:bedrock:{self.region}::foundation-model/*"
+                    "arn:aws:bedrock:*::foundation-model/*",
+                    f"arn:aws:bedrock:*:{self.account}:inference-profile/*",
                 ],
             )
         )
@@ -170,6 +182,7 @@ class ChatbotStack(Stack):
                 "VECTOR_BUCKET": self.vector_bucket.bucket_name,
                 "EMBEDDING_MODEL_ID": config["embedding"]["model_id"],
                 "LLM_MODEL_ID": config["llm"]["model_id"],
+                "LLM_REGION": config["llm"].get("region", self.region),
                 "DEFAULT_DIMENSION": str(config["embedding"]["default_dimension"]),
                 "DEFAULT_K": str(config["search"]["default_k"]),
                 "HIERARCHICAL_ENABLED": str(config["search"]["hierarchical_enabled"]),
@@ -224,3 +237,74 @@ class ChatbotStack(Stack):
         )
 
         return api
+
+    def _create_amplify_app(self) -> amplify.CfnApp:
+        """Create Amplify app for frontend hosting"""
+        
+        # Get GitHub token from context or environment
+        github_token = self.node.try_get_context("github_token")
+        
+        if not github_token:
+            print("⚠️  Warning: No GitHub token provided. Amplify app will be created but not connected.")
+            print("    To connect: Set github_token in cdk.json context or use --context github_token=<token>")
+            print("    Or connect manually in the Amplify Console after deployment.")
+        
+        # Build spec for Next.js in frontend/ subdirectory
+        build_spec = """version: 1
+applications:
+  - appRoot: frontend
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - npm ci
+        build:
+          commands:
+            - echo "NEXT_PUBLIC_QUERY_URL=$NEXT_PUBLIC_QUERY_URL" > .env.production
+            - npm run build
+      artifacts:
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+"""
+        
+        # Create Amplify app
+        app = amplify.CfnApp(
+            self,
+            "ChatbotFrontend",
+            name="Nova-MME-Chatbot",
+            repository=f"https://github.com/ssannier/Nova-MME-Chatbot-Demo" if github_token else None,
+            access_token=github_token,
+            build_spec=build_spec,
+            environment_variables=[
+                amplify.CfnApp.EnvironmentVariableProperty(
+                    name="AMPLIFY_MONOREPO_APP_ROOT",
+                    value="frontend"
+                ),
+                amplify.CfnApp.EnvironmentVariableProperty(
+                    name="NEXT_PUBLIC_QUERY_URL",
+                    value=f"{self.api.url}query"
+                ),
+                amplify.CfnApp.EnvironmentVariableProperty(
+                    name="_LIVE_UPDATES",
+                    value="[{\"name\":\"Next.js version\",\"pkg\":\"next-version\",\"type\":\"internal\",\"version\":\"latest\"}]"
+                )
+            ],
+            platform="WEB_COMPUTE"
+        )
+        
+        # Add main branch if token provided
+        if github_token:
+            branch = amplify.CfnBranch(
+                self,
+                "MainBranch",
+                app_id=app.attr_app_id,
+                branch_name="main",
+                stage="PRODUCTION",
+                enable_auto_build=True
+            )
+        
+        return app
