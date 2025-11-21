@@ -261,9 +261,9 @@ class TestStoreInVectorIndex:
         
         # Verify data structure
         stored_data = json.loads(call_args[1]['Body'])
-        assert 'embedding' in stored_data
+        assert 'vector' in stored_data  # Changed from 'embedding' to 'vector' for S3 Vectors
         assert 'metadata' in stored_data
-        assert stored_data['embedding'] == embedding
+        assert stored_data['vector'] == embedding
         assert stored_data['metadata'] == metadata
     
     @patch.object(store_embeddings, 's3_client')

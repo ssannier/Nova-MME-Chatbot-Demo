@@ -12,7 +12,7 @@ import importlib.util
 # Set required environment variables before importing
 os.environ['VECTOR_BUCKET'] = 'test-vector-bucket'
 os.environ['EMBEDDING_MODEL_ID'] = 'amazon.nova-2-multimodal-embeddings-v1:0'
-os.environ['LLM_MODEL_ID'] = 'anthropic.claude-3-5-sonnet-20241022-v2:0'
+os.environ['LLM_MODEL_ID'] = 'anthropic.claude-3-5-sonnet-20240620-v1:0'
 os.environ['DEFAULT_DIMENSION'] = '1024'
 os.environ['DEFAULT_K'] = '5'
 os.environ['HIERARCHICAL_ENABLED'] = 'true'
@@ -213,10 +213,10 @@ class TestGetTextContent:
 class TestCallClaude:
     """Tests for call_claude function"""
     
-    @patch.object(query_handler, 'bedrock_runtime')
-    def test_calls_claude(self, mock_bedrock):
+    @patch.object(query_handler, 'bedrock_runtime_llm')
+    def test_calls_claude(self, mock_bedrock_llm):
         """Test Claude API call"""
-        mock_bedrock.invoke_model.return_value = {
+        mock_bedrock_llm.invoke_model.return_value = {
             'body': Mock(read=lambda: json.dumps({
                 'content': [
                     {
@@ -231,8 +231,8 @@ class TestCallClaude:
         assert result == 'This is the answer from Claude.'
         
         # Verify correct API call
-        mock_bedrock.invoke_model.assert_called_once()
-        call_args = mock_bedrock.invoke_model.call_args
+        mock_bedrock_llm.invoke_model.assert_called_once()
+        call_args = mock_bedrock_llm.invoke_model.call_args
         body = json.loads(call_args[1]['body'])
         
         assert body['anthropic_version'] == 'bedrock-2023-05-31'

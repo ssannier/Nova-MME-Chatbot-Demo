@@ -131,21 +131,16 @@ class ChatbotStack(Stack):
             )
         )
 
-        # S3 Vector permissions for querying
+        # S3 Vectors permissions for querying embeddings
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
-                    "s3vector:QueryVectors",
-                    "s3vector:DescribeIndex",
+                    "s3:QueryVectors",
+                    "s3:DescribeVectorIndex",
+                    "s3:ListVectorIndexes",
+                    "s3:GetObject",  # Needed to read vector metadata
+                    "s3:ListBucket",
                 ],
-                resources=["*"],
-            )
-        )
-
-        # S3 read permissions for vector bucket
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=["s3:GetObject", "s3:ListBucket"],
                 resources=[
                     self.vector_bucket.bucket_arn,
                     f"{self.vector_bucket.bucket_arn}/*",

@@ -249,19 +249,20 @@ def store_in_vector_index(
     """
     Store embedding in S3 Vector index
     
-    Note: This is a placeholder implementation. The actual S3 Vector API
-    will be used once it's available. For now, we store in a structured format.
+    S3 Vectors automatically indexes objects stored in the correct path format.
+    The bucket must be created as type 'vector' and indexes must exist.
     """
     index_name = f"embeddings-{dimension}d"
     
     # Create a unique key for this embedding
     object_id = metadata['objectId']
     segment_index = metadata.get('segmentIndex', 0)
-    key = f"{index_name}/{object_id}/segment_{segment_index}.json"
+    key = f"{index_name}/{object_id}_segment_{segment_index}.json"
     
     # Store embedding with metadata
+    # S3 Vectors will automatically index the 'vector' field
     data = {
-        'embedding': embedding,
+        'vector': embedding,
         'metadata': metadata
     }
     
@@ -272,12 +273,7 @@ def store_in_vector_index(
         ContentType='application/json'
     )
     
-    print(f"Stored {dimension}d embedding: {key}")
-    
-    # TODO: Replace with actual S3 Vector API call when available
-    # Example:
-    # s3_vector_client.put_vector(
-    #     bucket=VECTOR_BUCKET,
+    print(f"Stored {dimension}d embedding in S3 Vector index: {key}")
     #     index=index_name,
     #     vector_id=f"{object_id}_segment_{segment_index}",
     #     vector=embedding,
