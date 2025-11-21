@@ -250,10 +250,11 @@ class ChatbotStack(Stack):
                 "GitHubToken",
                 "amplify/github-token"
             )
-            github_token = secret.secret_value.unsafe_unwrap()
+            # For CfnApp, we need to pass the secret value as a string token
+            github_token = secret.secret_value.to_string()
             print("✅ GitHub token loaded from Secrets Manager")
         except Exception as e:
-            print("⚠️  Warning: Could not load GitHub token from Secrets Manager.")
+            print(f"⚠️  Warning: Could not load GitHub token from Secrets Manager: {e}")
             print("    Run: scripts/store-github-token.bat <your-token>")
             print("    Or connect manually in the Amplify Console after deployment.")
             github_token = None
