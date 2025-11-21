@@ -16,6 +16,7 @@ from aws_cdk import (
     aws_apigateway as apigw,
     aws_s3 as s3,
     aws_amplify as amplify,
+    aws_secretsmanager as secretsmanager,
     CfnOutput,
 )
 from constructs import Construct
@@ -241,13 +242,21 @@ class ChatbotStack(Stack):
     def _create_amplify_app(self) -> amplify.CfnApp:
         """Create Amplify app for frontend hosting"""
         
-        # Get GitHub token from context or environment
-        github_token = self.node.try_get_context("github_token")
-        
-        if not github_token:
-            print("⚠️  Warning: No GitHub token provided. Amplify app will be created but not connected.")
-            print("    To connect: Set github_token in cdk.json context or use --context github_token=<token>")
+        # Try to get GitHub token from Secrets Manager
+        github_token = None
+        try:
+            secret = secretsmanager.Secret.from_secret_name_v2(
+                self,
+                "GitHubToken",
+                "amplify/github-token"
+            )
+            github_token = secret.secret_value.unsafe_unwrap()
+            print("✅ GitHub token loaded from Secrets Manager")
+        except Exception as e:
+            print("⚠️  Warning: Could not load GitHub token from Secrets Manager.")
+            print("    Run: scripts/store-github-token.bat <your-token>")
             print("    Or connect manually in the Amplify Console after deployment.")
+            github_token = None
         
         # Build spec for Next.js in frontend/ subdirectory
         build_spec = """version: 1

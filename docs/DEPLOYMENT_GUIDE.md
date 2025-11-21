@@ -11,7 +11,34 @@ python -m pytest tests/unit/ -v
 # Should see: ~100+ tests passing
 ```
 
-### 2. Deploy Backend (AWS)
+### 2. Store GitHub Token (For Amplify Auto-Deployment)
+
+Store your GitHub personal access token in AWS Secrets Manager:
+
+```bash
+# Windows
+scripts\store-github-token.bat ghp_your_token_here
+
+# Linux/Mac
+./scripts/store-github-token.sh ghp_your_token_here
+```
+
+**To create a GitHub token:**
+1. Go to: https://github.com/settings/tokens
+2. Click "Generate new token (classic)"
+3. Select scope: ✅ `repo` (full control)
+4. Copy the token (starts with `ghp_`)
+
+**If your token expires:**
+Simply generate a new token and run the script again:
+```bash
+scripts\store-github-token.bat ghp_new_token_here
+cdk deploy NovaMMEChatbotStack
+```
+
+The script will update the existing secret and redeploy Amplify with the new token.
+
+### 3. Deploy Backend (AWS)
 
 ```bash
 # Install CDK dependencies
@@ -23,27 +50,29 @@ cdk bootstrap
 # Deploy Embedder Stack
 cdk deploy NovaMMEEmbedderStack
 
-# Deploy Chatbot Stack
+# Deploy Chatbot Stack (includes Amplify frontend)
 cdk deploy NovaMMEChatbotStack
 ```
 
-**Important**: Note the API Gateway URL from the output:
+**Important**: Note the URLs from the output:
 ```
 Outputs:
 NovaMMEChatbotStack.ApiEndpoint = https://abc123xyz.execute-api.us-east-1.amazonaws.com/prod/
+NovaMMEChatbotStack.AmplifyAppUrl = https://main.d1234abcd.amplifyapp.com
 ```
 
-### 3. Configure Frontend
+The frontend is automatically deployed to Amplify and configured with the API endpoint!
+
+### 4. (Optional) Run Frontend Locally
+
+The frontend is already deployed to Amplify, but if you want to run it locally:
 
 Create `frontend/.env.local`:
 ```bash
 NEXT_PUBLIC_QUERY_URL=https://YOUR_API_GATEWAY_URL/query
 ```
 
-Replace `YOUR_API_GATEWAY_URL` with the URL from step 2.
-
-### 4. Run Frontend
-
+Run locally:
 ```bash
 cd frontend
 npm install
@@ -66,7 +95,7 @@ Monitor Step Functions execution in AWS Console to see embeddings being generate
 
 ### 6. Test the Chatbot
 
-In the frontend, try queries like:
+Visit your Amplify URL (from step 3 output) and try queries like:
 - "What videos do we have?"
 - "Tell me about the images"
 - "Summarize the documents"
@@ -135,10 +164,28 @@ Set in `frontend/.env.local`:
 
 ## Troubleshooting
 
+### GitHub Token Issues
+
+**Token expired:**
+```bash
+# Generate new token at https://github.com/settings/tokens
+# Update the secret
+scripts\store-github-token.bat ghp_new_token_here
+
+# Redeploy
+cdk deploy NovaMMEChatbotStack
+```
+
+**Amplify not connecting to GitHub:**
+- Verify token has `repo` scope
+- Check token is stored: `aws secretsmanager get-secret-value --secret-id amplify/github-token --region us-east-1`
+- Redeploy: `cdk deploy NovaMMEChatbotStack`
+
 ### Frontend can't connect to backend
 - Check CORS is enabled in API Gateway (already configured)
-- Verify API Gateway URL is correct in `.env.local`
+- Verify API Gateway URL is correct in Amplify environment variables
 - Check browser console for errors
+- Verify environment variable in Amplify Console: App settings → Environment variables
 
 ### No search results
 - Verify embeddings were created (check S3 Vector bucket)
