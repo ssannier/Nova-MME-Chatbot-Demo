@@ -26,11 +26,12 @@ embedder = EmbedderStack(
     description="Nova MME Embedder - Async processing pipeline with MRL"
 )
 
-# Deploy chatbot stack (references embedder's S3 Vector bucket)
+# Deploy chatbot stack (references embedder's S3 buckets)
 chatbot = ChatbotStack(
     app,
     "NovaMMEChatbotStack",
     vector_bucket=embedder.vector_bucket,
+    source_bucket=embedder.source_bucket,
     vector_indexes=embedder.vector_indexes,
     env=env,
     description="Nova MME Chatbot - Query interface with hierarchical search"

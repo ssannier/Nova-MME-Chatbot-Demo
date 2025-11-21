@@ -92,10 +92,21 @@ This function will:
 3. **Optional**: Implement hierarchical search:
    - First pass: Fast search using 256-dim embeddings (broad recall, top 20)
    - Second pass: Refine using 1024-dim embeddings (precision, top 5)
-4. Generate a prompt for the multimodal LLM, instructing it to answer only from the information retrieved by the semantic search
-5. If it cannot answer from these documents, it should be instructed to say so to the user
-6. Pass the formatted prompt, including relevant context, to the LLM
-7. Return the LLM response along with performance metrics
+4. **Retrieve actual content** for text sources:
+   - For TEXT modality: Download actual file content from source S3 bucket
+   - For VIDEO/AUDIO: Include segment timestamps and S3 URI
+   - For IMAGE: Include filename and S3 URI
+5. Generate a prompt for the multimodal LLM with:
+   - Actual text content (for text sources)
+   - Descriptive metadata (for media sources)
+   - Instructions to answer only from provided information
+6. Pass the formatted prompt, including relevant context, to Claude
+7. Return the LLM response along with source citations and performance metrics
+
+**IAM Permissions**:
+- Read access to S3 Vector bucket (for embeddings)
+- Read access to source S3 bucket (for retrieving actual content)
+- Bedrock access for Nova MME and Claude
 
 **Configurable parameters**:
 - Number of results to retrieve (k)

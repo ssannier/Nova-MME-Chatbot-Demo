@@ -27,12 +27,14 @@ class ChatbotStack(Stack):
         scope: Construct,
         construct_id: str,
         vector_bucket: s3.Bucket,
+        source_bucket: s3.Bucket,
         vector_indexes: dict,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
         self.vector_bucket = vector_bucket
+        self.source_bucket = source_bucket
         self.vector_indexes = vector_indexes
 
         # Load configuration
@@ -134,6 +136,17 @@ class ChatbotStack(Stack):
                 resources=[
                     self.vector_bucket.bucket_arn,
                     f"{self.vector_bucket.bucket_arn}/*",
+                ],
+            )
+        )
+
+        # S3 read permissions for source bucket (to retrieve actual content)
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:ListBucket"],
+                resources=[
+                    self.source_bucket.bucket_arn,
+                    f"{self.source_bucket.bucket_arn}/*",
                 ],
             )
         )
