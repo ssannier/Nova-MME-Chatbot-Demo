@@ -54,14 +54,41 @@ cdk deploy NovaMMEEmbedderStack
 cdk deploy NovaMMEChatbotStack
 ```
 
-**Important**: Note the URLs from the output:
+**Important**: Note the URLs and App ID from the output:
 ```
 Outputs:
 NovaMMEChatbotStack.ApiEndpoint = https://abc123xyz.execute-api.us-east-1.amazonaws.com/prod/
 NovaMMEChatbotStack.AmplifyAppUrl = https://main.d1234abcd.amplifyapp.com
 ```
 
-The frontend is automatically deployed to Amplify and configured with the API endpoint!
+### 3a. Trigger Initial Amplify Build
+
+After first deployment, Amplify needs a manual trigger to start the first build:
+
+```bash
+# Get your Amplify App ID from the URL above (e.g., d1234abcd from d1234abcd.amplifyapp.com)
+# Or list apps to find it:
+aws amplify list-apps --region us-east-1 --query "apps[?name=='Nova-MME-Chatbot'].appId" --output text
+
+# Trigger the first build
+aws amplify start-job --app-id YOUR_APP_ID --branch-name main --job-type RELEASE --region us-east-1
+```
+
+**After this first build:**
+- ✅ Future git pushes to `main` will automatically trigger builds
+- ✅ No manual intervention needed
+- ✅ No CDK redeployment required for frontend changes
+
+**To update frontend:**
+```bash
+# Just push to GitHub - Amplify auto-builds!
+git add frontend/
+git commit -m "Update frontend"
+git push origin main
+
+# Watch build progress in Amplify Console or:
+aws amplify list-jobs --app-id YOUR_APP_ID --branch-name main --region us-east-1
+```
 
 ### 4. (Optional) Run Frontend Locally
 
@@ -180,6 +207,18 @@ cdk deploy NovaMMEChatbotStack
 - Verify token has `repo` scope
 - Check token is stored: `aws secretsmanager get-secret-value --secret-id amplify/github-token --region us-east-1`
 - Redeploy: `cdk deploy NovaMMEChatbotStack`
+
+**Amplify shows "Update required" after deployment:**
+This is normal for first deployment. The app is created but needs an initial build trigger:
+```bash
+# Get App ID from Amplify Console or:
+aws amplify list-apps --region us-east-1 --query "apps[?name=='Nova-MME-Chatbot'].appId" --output text
+
+# Trigger first build
+aws amplify start-job --app-id YOUR_APP_ID --branch-name main --job-type RELEASE --region us-east-1
+```
+
+After the first build completes, all future pushes to `main` will auto-trigger builds.
 
 ### Frontend can't connect to backend
 - Check CORS is enabled in API Gateway (already configured)
