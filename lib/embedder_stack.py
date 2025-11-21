@@ -23,6 +23,14 @@ from aws_cdk import (
 from constructs import Construct
 import json
 
+# Import S3 Vectors construct
+try:
+    from cdk_s3_vectors import Bucket as VectorBucket, Index as VectorIndex
+except ImportError:
+    print("Warning: cdk-s3-vectors not installed. Run: pip install cdk-s3-vectors")
+    VectorBucket = None
+    VectorIndex = None
+
 
 class EmbedderStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -41,15 +49,55 @@ class EmbedderStack(Stack):
             versioned=False,
         )
 
-        # Create S3 Vector bucket for embeddings
-        self.vector_bucket = s3.Bucket(
-            self,
-            "VectorBucket",
-            bucket_name=config["buckets"]["vector_bucket"],
-            removal_policy=RemovalPolicy.DESTROY,
-            auto_delete_objects=True,
-            versioned=False,
-        )
+        # Create S3 Vector bucket for embeddings using cdk-s3-vectors construct
+        vector_bucket_name = config["buckets"]["vector_bucket"]
+        
+        if VectorBucket is not None:
+            # Use the S3 Vectors construct library
+            vector_bucket_construct = VectorBucket(
+                self,
+                "VectorBucket",
+                bucket_name=vector_bucket_name,
+                removal_policy=RemovalPolicy.DESTROY
+            )
+            
+            # Create 4 vector indexes for MRL dimensions
+            self.vector_indexes = {}
+            for dim in config["embedding"]["dimensions"]:
+                index_name = f"embeddings-{dim}d"
+                
+                VectorIndex(
+                    self,
+                    f"VectorIndex{dim}d",
+                    bucket=vector_bucket_construct,
+                    index_name=index_name,
+                    dimension=dim,
+                    distance_metric="cosine"
+                )
+                
+                self.vector_indexes[dim] = index_name
+            
+            # Create reference for other stacks
+            self.vector_bucket = s3.Bucket.from_bucket_name(
+                self,
+                "VectorBucketRef",
+                vector_bucket_name
+            )
+        else:
+            # Fallback: Create regular S3 bucket if construct not available
+            print("Warning: Using regular S3 bucket. Install cdk-s3-vectors for proper S3 Vectors support.")
+            self.vector_bucket = s3.Bucket(
+                self,
+                "VectorBucket",
+                bucket_name=vector_bucket_name,
+                removal_policy=RemovalPolicy.DESTROY,
+                auto_delete_objects=True,
+                versioned=False,
+            )
+            
+            self.vector_indexes = {
+                dim: f"embeddings-{dim}d" for dim in config["embedding"]["dimensions"]
+            }
 
         # Create S3 bucket for async job outputs
         self.output_bucket = s3.Bucket(
@@ -60,11 +108,6 @@ class EmbedderStack(Stack):
             auto_delete_objects=True,
             versioned=False,
         )
-
-        # Store vector indexes metadata (will be created by Lambda)
-        self.vector_indexes = {
-            dim: f"embeddings-{dim}d" for dim in config["embedding"]["dimensions"]
-        }
 
         # Create IAM role for Lambda functions with Bedrock access
         lambda_role = self._create_lambda_role()
@@ -167,11 +210,15 @@ class EmbedderStack(Stack):
             )
         )
 
-        # S3 Vector permissions (placeholder - adjust based on actual S3 Vector API)
+        # S3 Vectors permissions for storing and querying embeddings
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
-                    "s3vector:CreateIndex",
+                    "s3:CreateVectorIndex",
+                    "s3:PutObject",  # Already included above but needed for vector indexes
+                    "s3:QueryVectors",
+                    "s3:DescribeVectorIndex",
+                    "s3:ListVectorIndexes",
                     "s3vector:PutVector",
                     "s3vector:QueryVectors",
                     "s3vector:DescribeIndex",

@@ -184,65 +184,57 @@ def hierarchical_search(query_embedding: List[float], final_k: int) -> List[Dict
 
 def search_s3_vector_index(index_name: str, embedding: List[float], k: int) -> List[Dict[str, Any]]:
     """
-    Search S3 Vector index for similar embeddings
+    Search S3 Vector index for similar embeddings using native S3 Vectors API
     
-    Note: This is a placeholder implementation. Replace with actual S3 Vector API
-    when available. For now, it simulates search by reading stored embeddings.
+    S3 Vectors supports all 4 MRL dimensions (256, 384, 1024, 3072)
     """
-    # TODO: Replace with actual S3 Vector query API
-    # Example:
-    # response = s3_vector_client.query_vectors(
-    #     bucket=VECTOR_BUCKET,
-    #     index=index_name,
-    #     query_vector=embedding,
-    #     k=k
-    # )
-    
-    # Placeholder: Return mock results
-    # In production, this would query the actual S3 Vector index
     results = []
     
     try:
-        # List objects in the index directory
-        prefix = f"{index_name}/"
-        response = s3_client.list_objects_v2(
+        # Query S3 Vectors index using native similarity search
+        response = s3_client.query_vectors(
             Bucket=VECTOR_BUCKET,
-            Prefix=prefix,
-            MaxKeys=k * 2  # Get more than needed for filtering
+            IndexName=index_name,
+            QueryVector=embedding,
+            MaxResults=k,
+            DistanceMetric='cosine'
         )
         
-        if 'Contents' not in response:
-            return []
+        print(f"S3 Vectors query returned {len(response.get('Vectors', []))} results")
         
-        # Read and score embeddings
-        scored_results = []
-        for obj in response['Contents'][:k * 2]:
+        # Process results
+        for vector_result in response.get('Vectors', []):
             try:
-                # Read embedding file
-                file_response = s3_client.get_object(
+                # Read full object to get metadata
+                # S3 Vectors returns the key, we need to fetch the full object
+                obj_response = s3_client.get_object(
                     Bucket=VECTOR_BUCKET,
-                    Key=obj['Key']
+                    Key=vector_result['Key']
                 )
-                data = json.loads(file_response['Body'].read())
+                data = json.loads(obj_response['Body'].read())
                 
-                # Calculate cosine similarity
-                similarity = cosine_similarity(embedding, data['embedding'])
+                # Convert distance to similarity
+                # S3 Vectors returns cosine distance (0 = identical)
+                # We want similarity (1 = identical)
+                distance = vector_result.get('Distance', 0)
+                similarity = 1 - distance
                 
-                scored_results.append({
+                results.append({
                     'similarity': similarity,
                     'metadata': data['metadata'],
-                    'embedding': data['embedding']
+                    'embedding': data['vector']
                 })
+                
             except Exception as e:
-                print(f"Error reading {obj['Key']}: {e}")
+                print(f"Error reading vector object {vector_result.get('Key')}: {e}")
                 continue
         
-        # Sort by similarity and take top k
-        scored_results.sort(key=lambda x: x['similarity'], reverse=True)
-        results = scored_results[:k]
+        print(f"Successfully processed {len(results)} results from S3 Vectors")
         
     except Exception as e:
-        print(f"Error searching index {index_name}: {e}")
+        print(f"Error querying S3 Vectors index {index_name}: {e}")
+        import traceback
+        traceback.print_exc()
     
     return results
 

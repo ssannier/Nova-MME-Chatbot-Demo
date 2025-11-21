@@ -13,6 +13,7 @@ import os
 import boto3
 from datetime import datetime
 from typing import Dict, Any
+from urllib.parse import unquote_plus
 
 # Initialize clients
 s3_client = boto3.client('s3')
@@ -53,6 +54,9 @@ def handler(event, context):
         # Extract S3 info from event
         bucket = event['bucket']
         key = event['key']
+        
+        # URL-decode the key (S3 events URL-encode special characters)
+        key = unquote_plus(key)
         
         print(f"Processing file: s3://{bucket}/{key}")
         

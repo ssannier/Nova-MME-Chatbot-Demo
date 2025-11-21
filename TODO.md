@@ -129,13 +129,51 @@
   - [x] Enables true infrastructure-as-code for entire stack ✅
   - See: `docs/AMPLIFY_SETUP.md` for full documentation
 
+## 🎨 UX Improvements
+
+### Chatbot Interface Enhancements
+- [ ] **Add welcome message to chatbot**
+  - Display introductory message when chat loads
+  - Prompt user to ask about files in the S3 bucket
+  - Example: "Hi! I can help you search through files in the [bucket-name] S3 bucket. Ask me about images, videos, documents, or audio files!"
+  - Update: `frontend/components/ChatWindow.tsx` to show initial system message
+
+- [ ] **Improve "no results" response**
+  - Create structured fallback response when no relevant sources found
+  - Should be short and helpful (not apologetic rambling)
+  - Example format:
+    ```
+    I couldn't find relevant information in the knowledge base to answer that question.
+    
+    Try:
+    - Asking about specific files or content types
+    - Using different keywords
+    - Checking if files have been uploaded to the bucket
+    ```
+  - Update: `lambda/chatbot/query_handler/index.py` prompt formatting
+
 ## 💡 Future Enhancements (Post-Demo)
 
+### Vector Storage Migration
+- [x] **Migrate from placeholder S3 to S3 Vectors** ✅
+  - [x] Added cdk-s3-vectors construct library to requirements
+  - [x] Updated CDK to create S3 Vector bucket using construct
+  - [x] Created 4 vector indexes (256d, 384d, 1024d, 3072d) in CDK
+  - [x] Updated IAM permissions for S3 Vectors operations
+  - [x] Updated Store Embeddings Lambda to use 'vector' field
+  - [x] Updated Query Handler Lambda to use query_vectors API
+  - [ ] Install cdk-s3-vectors: `pip install -r requirements.txt`
+  - [ ] Deploy and test end-to-end
+  - [ ] Verify all 4 dimensions work with S3 Vectors
+  - See: `docs/S3_VECTORS_DEPLOYMENT.md` for deployment guide
+
 ### Research & Exploration
-- [ ] **Research Nova MME + Knowledge Bases integration**
-  - Check if Nova MME is now supported as an embedding model in Bedrock Knowledge Bases
-  - Compare managed Knowledge Base approach vs current S3 Vector approach
-  - Document findings for future projects
+- [ ] **Request S3 Vectors preview access**
+  - S3 Vectors is currently in preview
+  - Request access through AWS account team
+  - Test with Nova MME embeddings
+  - Verify MRL support (4 tables for 4 dimensions)
+  - Document API usage and CDK support
 
 ### Technical Improvements
 - [ ] Add retry logic to Step Functions
