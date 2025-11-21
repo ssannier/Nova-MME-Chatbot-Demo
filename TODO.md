@@ -117,6 +117,20 @@
 
 ---
 
+## 🔧 Infrastructure as Code Improvements
+
+- [ ] **Fully automate Amplify deployment in CDK**
+  - Store GitHub token in AWS Secrets Manager or SSM Parameter
+  - Reference token in CDK to auto-connect repository
+  - Define all Amplify settings in CDK (no console needed)
+  - Example approach:
+    ```python
+    # Store token: aws ssm put-parameter --name /amplify/github-token --value ghp_xxx --type SecureString
+    # Reference in CDK: github_token = ssm.StringParameter.value_from_lookup(self, "/amplify/github-token")
+    ```
+  - This eliminates manual console configuration
+  - Enables true infrastructure-as-code for entire stack
+
 ## 💡 Future Enhancements (Post-Demo)
 
 ### Research & Exploration
