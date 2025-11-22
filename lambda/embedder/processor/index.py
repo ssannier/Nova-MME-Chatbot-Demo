@@ -12,8 +12,17 @@ import json
 import os
 import boto3
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 from urllib.parse import unquote_plus
+import tempfile
+
+# PyMuPDF import (optional for testing)
+try:
+    import fitz  # PyMuPDF
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
+    print("Warning: PyMuPDF not installed, PDF support disabled")
 
 # Initialize clients
 s3_client = boto3.client('s3')
@@ -37,6 +46,7 @@ AUDIO_FORMATS = {
     '.mp3': 'mp3', '.wav': 'wav', '.ogg': 'ogg'
 }
 TEXT_FORMATS = ['.txt', '.md', '.json', '.csv']
+# PDFs are handled separately - converted to images then processed with DOCUMENT_IMAGE
 
 
 def handler(event, context):
@@ -55,7 +65,7 @@ def handler(event, context):
         bucket = event['bucket']
         key = event['key']
         
-        # URL-decode the key (S3 events URL-encode special characters)
+        # URL-decode the key if needed (defense in depth)
         key = unquote_plus(key)
         
         print(f"Processing file: s3://{bucket}/{key}")
@@ -64,13 +74,33 @@ def handler(event, context):
         metadata = extract_s3_metadata(bucket, key)
         print(f"Extracted metadata: {json.dumps(metadata)}")
         
-        # Determine file type and create model input
+        # Determine file type
         file_extension = os.path.splitext(key)[1].lower()
-        model_input = create_model_input(bucket, key, file_extension)
-        print(f"Created model input for type: {metadata['fileType']}")
+        
+        # Special handling for PDFs - convert to images first
+        if file_extension == '.pdf':
+            print(f"Converting PDF to images...")
+            image_uris = convert_pdf_to_images(bucket, key, metadata['objectId'])
+            print(f"Converted PDF to {len(image_uris)} images")
+            
+            # Process first page as document image
+            # Note: Multi-page PDFs will need multiple invocations or batch processing
+            # For now, we'll process the first page
+            model_input = create_model_input(bucket, image_uris[0].replace(f"s3://{bucket}/", ""), '.png')
+            model_input['segmentedEmbeddingParams']['image']['detailLevel'] = 'DOCUMENT_IMAGE'
+            
+            # Store PDF page info in metadata
+            metadata['isPdf'] = True
+            metadata['totalPages'] = len(image_uris)
+            metadata['processedPage'] = 1
+        else:
+            # Regular file processing
+            model_input = create_model_input(bucket, key, file_extension)
+            print(f"Created model input for type: {metadata['fileType']}")
         
         # Start async invocation
-        output_s3_uri = f"s3://{OUTPUT_BUCKET}/{metadata['objectId']}"
+        # Output URI must point to a directory (end with /)
+        output_s3_uri = f"s3://{OUTPUT_BUCKET}/{metadata['objectId']}/"
         invocation_arn = start_async_invocation(model_input, output_s3_uri)
         print(f"Started async invocation: {invocation_arn}")
         
@@ -144,7 +174,8 @@ def create_model_input(bucket: str, key: str, file_extension: str) -> Dict[str, 
             "source": {
                 "s3Location": {"uri": s3_uri}
             },
-            "detailLevel": "STANDARD_IMAGE"
+            # Use DOCUMENT_IMAGE for better text/diagram interpretation
+            "detailLevel": "DOCUMENT_IMAGE"
         }
     
     elif file_extension in VIDEO_FORMATS:
@@ -185,6 +216,57 @@ def create_model_input(bucket: str, key: str, file_extension: str) -> Dict[str, 
         raise ValueError(f"Unsupported file type: {file_extension}")
     
     return model_input
+
+
+def convert_pdf_to_images(bucket: str, key: str, object_id: str) -> List[str]:
+    """
+    Convert PDF pages to images and upload to S3
+    
+    Returns:
+        List of S3 URIs for the converted images
+    """
+    if not PDF_SUPPORT:
+        raise RuntimeError("PDF support not available - PyMuPDF not installed")
+    
+    # Download PDF from S3
+    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp_pdf:
+        s3_client.download_fileobj(bucket, key, tmp_pdf)
+        pdf_path = tmp_pdf.name
+    
+    try:
+        # Open PDF with PyMuPDF
+        pdf_document = fitz.open(pdf_path)
+        image_uris = []
+        
+        # Convert each page to image
+        for page_num in range(len(pdf_document)):
+            page = pdf_document[page_num]
+            
+            # Render page to image at high resolution (300 DPI for DOCUMENT_IMAGE)
+            pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))
+            
+            # Convert to PNG bytes
+            img_bytes = pix.tobytes("png")
+            
+            # Upload to S3 in a temp location
+            image_key = f"pdf-temp/{object_id}/page_{page_num + 1}.png"
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=image_key,
+                Body=img_bytes,
+                ContentType='image/png'
+            )
+            
+            image_uris.append(f"s3://{bucket}/{image_key}")
+            print(f"Converted PDF page {page_num + 1} to {image_key}")
+        
+        pdf_document.close()
+        return image_uris
+        
+    finally:
+        # Clean up temp file
+        if os.path.exists(pdf_path):
+            os.unlink(pdf_path)
 
 
 def start_async_invocation(model_input: Dict[str, Any], output_s3_uri: str) -> str:

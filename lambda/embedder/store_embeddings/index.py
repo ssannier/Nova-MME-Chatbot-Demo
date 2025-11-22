@@ -37,10 +37,14 @@ except ImportError:
 
 # Initialize clients
 s3_client = boto3.client('s3')
+s3vectors_client = boto3.client('s3vectors', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
 
 # Environment variables
 VECTOR_BUCKET = os.environ['VECTOR_BUCKET']
 EMBEDDING_DIMENSIONS = [int(d) for d in os.environ.get('EMBEDDING_DIMENSIONS', '256,384,1024,3072').split(',')]
+
+print(f"Lambda initialized - VECTOR_BUCKET: {VECTOR_BUCKET}")
+print(f"Lambda initialized - EMBEDDING_DIMENSIONS: {EMBEDDING_DIMENSIONS}")
 
 
 def handler(event, context):
@@ -56,16 +60,25 @@ def handler(event, context):
     """
     try:
         output_s3_uri = event['outputS3Uri']
+        invocation_arn = event['invocationArn']
         source_metadata = event['metadata']
         
         print(f"Processing embeddings from: {output_s3_uri}")
+        print(f"Invocation ARN: {invocation_arn}")
         print(f"Source metadata: {json.dumps(source_metadata)}")
         
-        # Parse S3 URI
+        # Extract invocation ID from ARN (last part after /)
+        invocation_id = invocation_arn.split('/')[-1]
+        print(f"Invocation ID: {invocation_id}")
+        
+        # Parse S3 URI and append invocation ID
         bucket, prefix = parse_s3_uri(output_s3_uri)
+        # Nova MME creates a subdirectory with the invocation ID
+        full_prefix = f"{prefix}/{invocation_id}"
+        print(f"Parsed - Bucket: {bucket}, Full Prefix: {full_prefix}")
         
         # Read the segmented-embedding-result.json
-        result_file = read_result_file(bucket, prefix)
+        result_file = read_result_file(bucket, full_prefix)
         
         # Process each modality's embeddings
         total_stored = 0
@@ -75,7 +88,7 @@ def handler(event, context):
                     embedding_result,
                     source_metadata,
                     bucket,
-                    prefix
+                    full_prefix
                 )
                 total_stored += count
         
@@ -105,6 +118,8 @@ def parse_s3_uri(s3_uri: str) -> tuple:
     parts = s3_uri.replace('s3://', '').split('/', 1)
     bucket = parts[0]
     prefix = parts[1] if len(parts) > 1 else ''
+    # Remove trailing slash if present
+    prefix = prefix.rstrip('/')
     return bucket, prefix
 
 
@@ -114,9 +129,23 @@ def read_result_file(bucket: str, prefix: str) -> Dict[str, Any]:
     
     print(f"Reading result file: s3://{bucket}/{key}")
     
-    response = s3_client.get_object(Bucket=bucket, Key=key)
-    content = response['Body'].read().decode('utf-8')
-    return json.loads(content)
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        content = response['Body'].read().decode('utf-8')
+        return json.loads(content)
+    except Exception as e:
+        print(f"Error reading result file. Bucket: {bucket}, Key: {key}")
+        print(f"Listing files in prefix to debug:")
+        try:
+            list_response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+            if 'Contents' in list_response:
+                for obj in list_response['Contents']:
+                    print(f"  Found: {obj['Key']}")
+            else:
+                print(f"  No files found with prefix: {prefix}")
+        except Exception as list_error:
+            print(f"  Could not list files: {list_error}")
+        raise
 
 
 def process_modality_embeddings(
@@ -241,39 +270,67 @@ def create_combined_metadata(
     return metadata
 
 
+def sanitize_metadata_for_s3vectors(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Sanitize metadata for S3 Vectors API
+    - Only strings, numbers, booleans, and arrays are allowed
+    - Convert None to empty string
+    - Convert all values to simple types
+    """
+    sanitized = {}
+    for key, value in metadata.items():
+        if value is None:
+            sanitized[key] = ""
+        elif isinstance(value, (str, int, float, bool)):
+            sanitized[key] = str(value) if not isinstance(value, bool) else value
+        elif isinstance(value, list):
+            # Convert list items to strings
+            sanitized[key] = [str(v) for v in value]
+        elif isinstance(value, dict):
+            # Skip nested dicts - S3 Vectors doesn't support them
+            continue
+        else:
+            # Convert everything else to string
+            sanitized[key] = str(value)
+    return sanitized
+
+
 def store_in_vector_index(
     dimension: int,
     embedding: List[float],
     metadata: Dict[str, Any]
 ):
     """
-    Store embedding in S3 Vector index
-    
-    S3 Vectors automatically indexes objects stored in the correct path format.
-    The bucket must be created as type 'vector' and indexes must exist.
+    Store embedding in S3 Vector index using S3 Vectors API
     """
     index_name = f"embeddings-{dimension}d"
     
-    # Create a unique key for this embedding
+    # Create a unique vector ID
     object_id = metadata['objectId']
     segment_index = metadata.get('segmentIndex', 0)
-    key = f"{index_name}/{object_id}_segment_{segment_index}.json"
+    vector_id = f"{object_id}_segment_{segment_index}"
     
-    # Store embedding with metadata
-    # S3 Vectors will automatically index the 'vector' field
-    data = {
-        'vector': embedding,
-        'metadata': metadata
+    # Sanitize metadata for S3 Vectors
+    clean_metadata = sanitize_metadata_for_s3vectors(metadata)
+    
+    # Prepare vector object for S3 Vectors API
+    # The API expects 'key', 'data' with 'float32' array, and 'metadata'
+    vector_obj = {
+        'key': vector_id,
+        'data': {
+            'float32': embedding
+        },
+        'metadata': clean_metadata
     }
     
-    s3_client.put_object(
-        Bucket=VECTOR_BUCKET,
-        Key=key,
-        Body=json.dumps(data),
-        ContentType='application/json'
+    # Use S3 Vectors put_vectors API (batch operation)
+    s3vectors_client.put_vectors(
+        vectorBucketName=VECTOR_BUCKET,
+        indexName=index_name,
+        vectors=[vector_obj]
     )
     
-    print(f"Stored {dimension}d embedding in S3 Vector index: {key}")
+    print(f"Stored {dimension}d embedding in S3 Vector index {index_name}: {vector_id}")
     #     index=index_name,
     #     vector_id=f"{object_id}_segment_{segment_index}",
     #     vector=embedding,

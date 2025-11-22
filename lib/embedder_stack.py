@@ -13,6 +13,7 @@ from aws_cdk import (
     Stack,
     Duration,
     RemovalPolicy,
+    BundlingOptions,
     aws_s3 as s3,
     aws_lambda as lambda_,
     aws_iam as iam,
@@ -47,6 +48,14 @@ class EmbedderStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
             versioned=False,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    id="DeletePdfTempFiles",
+                    prefix="pdf-temp/",
+                    expiration=Duration.days(1),
+                    enabled=True,
+                )
+            ],
         )
 
         # Create S3 Vector bucket for embeddings using cdk-s3-vectors construct
@@ -57,8 +66,7 @@ class EmbedderStack(Stack):
             vector_bucket_construct = VectorBucket(
                 self,
                 "VectorBucket",
-                bucket_name=vector_bucket_name,
-                removal_policy=RemovalPolicy.DESTROY
+                vector_bucket_name=vector_bucket_name
             )
             
             # Create 4 vector indexes for MRL dimensions
@@ -69,10 +77,11 @@ class EmbedderStack(Stack):
                 VectorIndex(
                     self,
                     f"VectorIndex{dim}d",
-                    bucket=vector_bucket_construct,
+                    vector_bucket_name=vector_bucket_name,
                     index_name=index_name,
                     dimension=dim,
-                    distance_metric="cosine"
+                    distance_metric="cosine",
+                    data_type="float32"
                 )
                 
                 self.vector_indexes[dim] = index_name
@@ -107,10 +116,17 @@ class EmbedderStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
             versioned=False,
+            lifecycle_rules=[
+                s3.LifecycleRule(
+                    id="DeleteAsyncOutputs",
+                    expiration=Duration.days(1),
+                    enabled=True,
+                )
+            ],
         )
 
         # Create IAM role for Lambda functions with Bedrock access
-        lambda_role = self._create_lambda_role()
+        lambda_role = self._create_lambda_role(config)
 
         # Lambda 1: Nova MME Processor
         self.processor_lambda = self._create_processor_lambda(lambda_role, config)
@@ -150,7 +166,7 @@ class EmbedderStack(Stack):
                 },
             }
 
-    def _create_lambda_role(self) -> iam.Role:
+    def _create_lambda_role(self, config: dict) -> iam.Role:
         """Create IAM role with permissions for Bedrock, S3, and S3 Vector"""
         role = iam.Role(
             self,
@@ -163,17 +179,19 @@ class EmbedderStack(Stack):
             ],
         )
 
-        # Bedrock permissions
+        # Bedrock permissions for synchronous and asynchronous invocations
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
                     "bedrock:InvokeModel",
                     "bedrock:InvokeModelWithResponseStream",
-                    "bedrock-runtime:InvokeModel",
-                    "bedrock-runtime:InvokeModelWithResponseStream",
+                    "bedrock:StartAsyncInvoke",
+                    "bedrock:GetAsyncInvoke",
+                    "bedrock:ListAsyncInvokes",
                 ],
                 resources=[
-                    f"arn:aws:bedrock:{self.region}::foundation-model/*"
+                    f"arn:aws:bedrock:{self.region}::foundation-model/*",
+                    f"arn:aws:bedrock:{self.region}:{self.account}:async-invoke/*"
                 ],
             )
         )
@@ -187,6 +205,21 @@ class EmbedderStack(Stack):
                     "bedrock:ListAsyncInvokes",
                 ],
                 resources=["*"],
+            )
+        )
+
+        # S3 Vectors permissions
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "s3vectors:PutVectors",
+                    "s3vectors:GetVectors",
+                    "s3vectors:QueryVectors",
+                    "s3vectors:DeleteVectors",
+                ],
+                resources=[
+                    f"arn:aws:s3vectors:{self.region}:{self.account}:bucket/{config['buckets']['vector_bucket']}/*",
+                ],
             )
         )
 
@@ -241,7 +274,7 @@ class EmbedderStack(Stack):
             code=lambda_.Code.from_asset("lambda/embedder/processor"),
             role=role,
             timeout=Duration.minutes(5),
-            memory_size=512,
+            memory_size=1024,  # Increased for PDF processing
             environment={
                 "EMBEDDING_DIMENSION": "3072",  # Always use max for MRL
                 "MODEL_ID": config["embedding"]["model_id"],
@@ -331,6 +364,13 @@ class EmbedderStack(Stack):
             error="JobFailed",
         )
 
+        # Check if storage succeeded
+        storage_check = sfn.Choice(self, "StorageSucceeded?")
+        storage_check.when(
+            sfn.Condition.string_equals("$.status", "SUCCESS"),
+            success_state
+        ).otherwise(failure_state)
+
         # Define the workflow
         definition = (
             process_task.next(wait_state)
@@ -339,7 +379,7 @@ class EmbedderStack(Stack):
                 sfn.Choice(self, "JobComplete?")
                 .when(
                     sfn.Condition.string_equals("$.status", "COMPLETED"),
-                    store_task.next(success_state),
+                    store_task.next(storage_check),
                 )
                 .when(
                     sfn.Condition.string_equals("$.status", "FAILED"),
@@ -368,6 +408,7 @@ class EmbedderStack(Stack):
                 f"""
 import json
 import boto3
+from urllib.parse import unquote_plus
 
 sfn = boto3.client('stepfunctions')
 
@@ -375,6 +416,14 @@ def handler(event, context):
     for record in event['Records']:
         bucket = record['s3']['bucket']['name']
         key = record['s3']['object']['key']
+        
+        # URL-decode the key (S3 events URL-encode special characters)
+        key = unquote_plus(key)
+        
+        # Skip temporary PDF conversion files to avoid infinite loop
+        if key.startswith('pdf-temp/'):
+            print(f"Skipping temporary PDF file: {{key}}")
+            continue
         
         # Start state machine execution
         sfn.start_execution(

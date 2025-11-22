@@ -50,13 +50,17 @@ def handler(event, context):
             workflow_status = 'IN_PROGRESS'
         
         # Return updated event with status
+        # Convert datetime objects to ISO format strings for JSON serialization
+        submit_time = response.get('submitTime')
+        last_modified = response.get('lastModifiedTime')
+        
         return {
             **event,  # Pass through all previous data
             'status': workflow_status,
             'bedrockStatus': status,
             'statusDetails': {
-                'submitTime': response.get('submitTime', ''),
-                'lastModifiedTime': response.get('lastModifiedTime', ''),
+                'submitTime': submit_time.isoformat() if submit_time else '',
+                'lastModifiedTime': last_modified.isoformat() if last_modified else '',
                 'failureMessage': response.get('failureMessage', '')
             }
         }

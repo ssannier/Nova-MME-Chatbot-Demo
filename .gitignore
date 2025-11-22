@@ -55,3 +55,25 @@ yarn-error.log*
 # Logs
 *.log
 logs/
+
+# Temp files
+nul
+sts get-caller-identity
+
+# Lambda dependencies (installed locally for CDK packaging)
+# Exclude all pip-installed packages in Lambda directories
+lambda/**/boto3/
+lambda/**/botocore/
+lambda/**/jmespath/
+lambda/**/dateutil/
+lambda/**/s3transfer/
+lambda/**/six.py
+lambda/**/urllib3/
+lambda/**/PyMuPDF*
+lambda/**/fitz/
+lambda/**/numpy/
+lambda/**/numpy.libs/
+lambda/**/bin/
+lambda/**/*.dist-info/
+lambda/**/*.so
+lambda/**/*.so.*

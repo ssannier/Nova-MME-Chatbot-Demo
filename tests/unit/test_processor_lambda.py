@@ -226,6 +226,9 @@ class TestCreateModelInput:
         result = processor.create_model_input('bucket', 'data.csv', '.csv')
         assert 'text' in result['segmentedEmbeddingParams']
     
+    # NOTE: PDFs are handled specially in the handler (converted to images first)
+    # They don't go through create_model_input directly
+    
     # ERROR HANDLING
     def test_unsupported_file_type(self):
         """Test error handling for unsupported file types"""
