@@ -35,6 +35,9 @@ except ImportError:
                 result[dim] = normalized.tolist()
         return result
 
+# Import numpy for float32 conversion (required by S3 Vectors API)
+import numpy as np
+
 # Initialize clients
 s3_client = boto3.client('s3')
 s3vectors_client = boto3.client('s3vectors', region_name=os.environ.get('AWS_REGION', 'us-east-1'))
@@ -315,10 +318,11 @@ def store_in_vector_index(
     
     # Prepare vector object for S3 Vectors API
     # The API expects 'key', 'data' with 'float32' array, and 'metadata'
+    # IMPORTANT: Must convert to numpy.float32 as per S3 Vectors API requirements
     vector_obj = {
         'key': vector_id,
         'data': {
-            'float32': embedding
+            'float32': np.array(embedding, dtype=np.float32).tolist()
         },
         'metadata': clean_metadata
     }
