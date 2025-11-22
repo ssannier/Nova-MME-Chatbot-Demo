@@ -176,6 +176,13 @@
   - Document API usage and CDK support
 
 ### Technical Improvements
+- [ ] **Fetch and pass actual media content to Claude**
+  - Currently only passing metadata for images/video/audio
+  - Claude multimodal can analyze images directly
+  - For video/audio: Extract keyframes or transcripts
+  - Update `format_prompt()` in query_handler to fetch and encode media
+  - Use base64 encoding for images in Claude API
+  - Consider caching frequently accessed media
 - [ ] Add retry logic to Step Functions
 - [ ] Add CloudWatch alarms for failed embeddings
 - [ ] Add cost tracking/monitoring

@@ -18,6 +18,7 @@ from datetime import datetime
 # Initialize clients
 bedrock_runtime = boto3.client('bedrock-runtime')
 s3_client = boto3.client('s3')
+s3vectors_client = boto3.client('s3vectors')
 
 # Environment variables
 VECTOR_BUCKET = os.environ['VECTOR_BUCKET']
@@ -192,41 +193,39 @@ def search_s3_vector_index(index_name: str, embedding: List[float], k: int) -> L
     
     try:
         # Query S3 Vectors index using native similarity search
-        response = s3_client.query_vectors(
-            Bucket=VECTOR_BUCKET,
-            IndexName=index_name,
-            QueryVector=embedding,
-            MaxResults=k,
-            DistanceMetric='cosine'
+        response = s3vectors_client.query_vectors(
+            vectorBucketName=VECTOR_BUCKET,
+            indexName=index_name,
+            queryVector=embedding,
+            maxResults=k
         )
         
-        print(f"S3 Vectors query returned {len(response.get('Vectors', []))} results")
+        print(f"S3 Vectors query returned {len(response.get('vectors', []))} results")
         
         # Process results
-        for vector_result in response.get('Vectors', []):
+        # S3 Vectors query_vectors returns key, data, metadata, and distance directly
+        for vector_result in response.get('vectors', []):
             try:
-                # Read full object to get metadata
-                # S3 Vectors returns the key, we need to fetch the full object
-                obj_response = s3_client.get_object(
-                    Bucket=VECTOR_BUCKET,
-                    Key=vector_result['Key']
-                )
-                data = json.loads(obj_response['Body'].read())
-                
                 # Convert distance to similarity
-                # S3 Vectors returns cosine distance (0 = identical)
-                # We want similarity (1 = identical)
-                distance = vector_result.get('Distance', 0)
-                similarity = 1 - distance
+                # S3 Vectors returns cosine distance (0 = identical, 2 = opposite)
+                # We want similarity (1 = identical, 0 = opposite)
+                distance = vector_result.get('distance', 0)
+                similarity = 1 - (distance / 2)  # Normalize to 0-1 range
+                
+                # Extract metadata and embedding from response
+                metadata = vector_result.get('metadata', {})
+                embedding = vector_result.get('data', {}).get('float32', [])
                 
                 results.append({
                     'similarity': similarity,
-                    'metadata': data['metadata'],
-                    'embedding': data['vector']
+                    'metadata': metadata,
+                    'embedding': embedding
                 })
                 
+                print(f"Found vector: {vector_result.get('key')} with distance {distance:.4f}")
+                
             except Exception as e:
-                print(f"Error reading vector object {vector_result.get('Key')}: {e}")
+                print(f"Error processing vector result {vector_result.get('key')}: {e}")
                 continue
         
         print(f"Successfully processed {len(results)} results from S3 Vectors")
