@@ -193,11 +193,14 @@ def search_s3_vector_index(index_name: str, embedding: List[float], k: int) -> L
     
     try:
         # Query S3 Vectors index using native similarity search
+        # queryVector must be a dict with 'float32' key, not a list
         response = s3vectors_client.query_vectors(
             vectorBucketName=VECTOR_BUCKET,
             indexName=index_name,
-            queryVector=embedding,
-            maxResults=k
+            queryVector={'float32': embedding},
+            topK=k,
+            returnMetadata=True,
+            returnDistance=True
         )
         
         print(f"S3 Vectors query returned {len(response.get('vectors', []))} results")
