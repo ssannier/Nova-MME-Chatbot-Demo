@@ -80,3 +80,5 @@ lambda/**/*.so.*
 tests/unit/__pycache__/test_processor_lambda.cpython-314-pytest-9.0.1.pyc
 check_api.py
 get_logs.ps1
+FILTER_RESEARCH.md
+test_s3vectors_filter.py

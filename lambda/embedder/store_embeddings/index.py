@@ -258,6 +258,14 @@ def create_combined_metadata(
         'processingTimestamp': datetime.now().isoformat(),
     }
     
+    # Add PDF-specific metadata if present
+    if 'isPdf' in source_metadata:
+        metadata['isPdf'] = source_metadata['isPdf']
+    if 'processedPage' in source_metadata:
+        metadata['processedPage'] = source_metadata['processedPage']
+    if 'totalPages' in source_metadata:
+        metadata['totalPages'] = source_metadata['totalPages']
+    
     # Add modality-specific segment metadata
     if 'segmentStartSeconds' in segment_metadata:
         metadata['segmentStartSeconds'] = segment_metadata['segmentStartSeconds']

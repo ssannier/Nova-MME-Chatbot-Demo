@@ -73,22 +73,31 @@ def handler(event, context):
         else:
             sources = simple_search(query_embedding, dimension, k)
         
-        print(f"Found {len(sources)} relevant sources")
+        # Filter sources by similarity threshold (remove low-relevance results)
+        SIMILARITY_THRESHOLD = 0.60  # 60% minimum similarity
+        filtered_sources = [s for s in sources if s.get('similarity', 0) >= SIMILARITY_THRESHOLD]
+        
+        print(f"Found {len(sources)} sources, {len(filtered_sources)} above {SIMILARITY_THRESHOLD:.0%} threshold")
         
         # Step 3: Format prompt with context
-        prompt = format_prompt(query, sources)
+        prompt = format_prompt(query, filtered_sources)
         
         # Step 4: Get response from Claude
         answer = call_claude(prompt)
         
         # Step 5: Format response for frontend
+        formatted_sources = format_sources(filtered_sources)
+        
+        # Debug: Log formatted sources
+        print(f"Formatted sources: {formatted_sources}")
+        
         response_data = {
             'answer': answer,
-            'sources': format_sources(sources),
+            'sources': formatted_sources,
             'model': LLM_MODEL_ID,
             'query': query,
             'dimension': dimension,
-            'resultsFound': len(sources)
+            'resultsFound': len(filtered_sources)
         }
         
         return create_response(200, response_data)
@@ -154,13 +163,16 @@ def hierarchical_search(query_embedding: List[float], final_k: int) -> List[Dict
     """
     Hierarchical search: fast coarse search followed by precise refinement
     
+    Since S3 Vectors API doesn't return vector data, we do two separate searches:
     1. First pass: Search at 256-dim for broad recall (top 20)
-    2. Second pass: Re-rank top results using 1024-dim for precision (top 5)
+    2. Second pass: Search at 1024-dim on the same query for precision (top 5)
+    
+    This demonstrates the MRL speed/accuracy tradeoff without manual reranking.
     
     Returns:
         List of refined source documents
     """
-    # First pass: Fast, broad search
+    # First pass: Fast, broad search at lower dimension
     first_dim = HIERARCHICAL_CONFIG.get('first_pass_dimension', 256)
     first_k = HIERARCHICAL_CONFIG.get('first_pass_k', 20)
     
@@ -170,15 +182,16 @@ def hierarchical_search(query_embedding: List[float], final_k: int) -> List[Dict
     first_embedding = query_embedding[:first_dim]
     first_results = simple_search(first_embedding, first_dim, first_k)
     
-    # Second pass: Precise re-ranking
+    # Second pass: Precise search at higher dimension
+    # Note: We search again rather than rerank because S3 Vectors doesn't return vector data
     second_dim = HIERARCHICAL_CONFIG.get('second_pass_dimension', 1024)
     second_k = HIERARCHICAL_CONFIG.get('second_pass_k', final_k)
     
     print(f"Hierarchical search - Second pass: {second_dim}d, k={second_k}")
     
-    # Re-rank first pass results using higher dimension
+    # Search at higher dimension for better precision
     second_embedding = query_embedding[:second_dim]
-    refined_results = rerank_results(first_results, second_embedding, second_k)
+    refined_results = simple_search(second_embedding, second_dim, second_k)
     
     return refined_results
 
@@ -194,6 +207,7 @@ def search_s3_vector_index(index_name: str, embedding: List[float], k: int) -> L
     try:
         # Query S3 Vectors index using native similarity search
         # queryVector must be a dict with 'float32' key, not a list
+        # Note: S3 Vectors API doesn't support returnData, so we can't get embeddings back for reranking
         response = s3vectors_client.query_vectors(
             vectorBucketName=VECTOR_BUCKET,
             indexName=index_name,
@@ -248,8 +262,22 @@ def rerank_results(results: List[Dict[str, Any]], embedding: List[float], k: int
     scored = []
     for result in results:
         # Truncate stored embedding to match query dimension
-        stored_embedding = result['embedding'][:len(embedding)]
-        similarity = cosine_similarity(embedding, stored_embedding)
+        stored_embedding = result.get('embedding', [])
+        
+        # Debug: Check if embedding exists
+        if not stored_embedding:
+            print(f"WARNING: No embedding found in result, using original similarity")
+            # Fall back to original similarity from S3 Vectors
+            scored.append({
+                'similarity': result.get('similarity', 0.0),
+                'metadata': result['metadata']
+            })
+            continue
+        
+        stored_embedding_truncated = stored_embedding[:len(embedding)]
+        similarity = cosine_similarity(embedding, stored_embedding_truncated)
+        
+        print(f"Rerank: query_dim={len(embedding)}, stored_dim={len(stored_embedding)}, similarity={similarity:.4f}")
         
         scored.append({
             'similarity': similarity,
@@ -303,7 +331,17 @@ def format_prompt(query: str, sources: List[Dict[str, Any]]) -> str:
         
         # For images, provide description
         elif modality == 'IMAGE':
-            source_context += f"\n[Image file: {filename}]"
+            # Check if this is a PDF page (converted to image)
+            is_pdf = metadata.get('isPdf', False)
+            page_num = metadata.get('processedPage')
+            
+            if is_pdf and page_num is not None:
+                source_context += f"\n[PDF document - Page {page_num}]"
+                source_context += f"\nThis page was semantically matched to your query based on its visual and textual content."
+                source_context += f"\nThe page likely contains relevant information about your question."
+            else:
+                source_context += f"\n[Image file: {filename}]"
+            
             source_context += f"\nLocation: {source_uri}"
         
         # For video, provide segment info
@@ -335,11 +373,12 @@ Context from relevant sources:
 User Question: {query}
 
 Instructions:
-- Answer the question using ONLY the information provided in the sources above
+- Answer the question using the information from the sources above
 - For text sources, use the actual content provided
-- For media sources (images, videos, audio), reference them by filename and describe what type of content they are
-- If the sources don't contain enough information to answer, say so clearly
-- Cite which sources you used in your answer (e.g., "According to video.mp4...")
+- For PDF pages: These were semantically matched to the query, so they contain relevant information even though the full text isn't shown here. You can reference them confidently as containing information related to the query.
+- For media sources (images, videos, audio), reference them by filename and type
+- If you need more specific details than what's provided, acknowledge the limitation
+- Cite which sources you used (e.g., "According to Page 1 of document.pdf...")
 - Be concise but thorough
 
 Answer:"""
@@ -426,12 +465,14 @@ def format_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Format sources for frontend display
     
+    Shows original filename and relevant location info (page, timestamp, etc.)
+    
     Returns format expected by ChatWindow.tsx:
     [
         {
-            "key": "filename.mp4",
+            "key": "document.pdf",
             "similarity": 0.95,
-            "text_preview": "Preview text..."
+            "text_preview": "Page 3"
         }
     ]
     """
@@ -444,25 +485,45 @@ def format_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         # Extract key information
         filename = metadata.get('fileName', 'Unknown')
         modality = metadata.get('modalityType', 'Unknown')
-        source_uri = metadata.get('sourceS3Uri', '')
         
-        # Create preview text
-        preview_parts = [f"Type: {modality}"]
+        # Build location info based on content type
+        location_info = []
         
-        if 'segmentIndex' in metadata:
-            preview_parts.append(f"Segment: {metadata['segmentIndex']}")
+        # For PDFs (processed as images), show page number
+        if metadata.get('isPdf') or (modality == 'IMAGE' and 'processedPage' in metadata):
+            page = metadata.get('processedPage')
+            if page is not None:
+                location_info.append(f"Page {page}")
         
-        if 'segmentStartSeconds' in metadata:
+        # For video/audio, show timestamp
+        elif modality in ['VIDEO', 'AUDIO'] and 'segmentStartSeconds' in metadata:
             start = metadata['segmentStartSeconds']
             end = metadata.get('segmentEndSeconds', start)
-            preview_parts.append(f"Time: {start:.1f}s - {end:.1f}s")
+            # Format as MM:SS
+            start_min = int(start // 60)
+            start_sec = int(start % 60)
+            end_min = int(end // 60)
+            end_sec = int(end % 60)
+            location_info.append(f"{start_min}:{start_sec:02d}-{end_min}:{end_sec:02d}")
         
-        if 'segmentStartCharPosition' in metadata:
+        # For text files, show character range if available
+        elif modality == 'TEXT' and 'segmentStartCharPosition' in metadata:
             start = metadata['segmentStartCharPosition']
             end = metadata.get('segmentEndCharPosition', start)
-            preview_parts.append(f"Chars: {start}-{end}")
+            # Show as approximate line numbers (assuming ~80 chars per line)
+            start_line = start // 80 + 1
+            end_line = end // 80 + 1
+            if start_line == end_line:
+                location_info.append(f"~Line {start_line}")
+            else:
+                location_info.append(f"~Lines {start_line}-{end_line}")
         
-        preview = " | ".join(preview_parts)
+        # Build preview text
+        if location_info:
+            preview = " | ".join(location_info)
+        else:
+            # Fallback: just show modality type
+            preview = modality
         
         formatted.append({
             'key': filename,
