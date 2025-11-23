@@ -11,6 +11,7 @@ type Message = {
 		similarity: number;
 		text_preview: string;
 	}>;
+	processingSteps?: string[];
 };
 
 const ChatWindow: React.FC = () => {
@@ -48,7 +49,8 @@ const ChatWindow: React.FC = () => {
 				id: String(Date.now() + 1), 
 				role: "assistant", 
 				text: assistantText,
-				sources: data?.sources || []
+				sources: data?.sources || [],
+				processingSteps: data?.processingSteps || []
 			};
 			setMessages((s) => [...s, assistantMsg]);
 		} catch (err) {
@@ -104,6 +106,23 @@ const ChatWindow: React.FC = () => {
 						>
 							<div className="whitespace-pre-wrap">{m.text}</div>
 						</div>
+						
+						{m.processingSteps && m.processingSteps.length > 0 && (
+							<div className="mt-2 max-w-[70%]">
+								<details className="text-xs bg-blue-50 dark:bg-blue-950 rounded p-2 border border-blue-200 dark:border-blue-800">
+									<summary className="cursor-pointer text-blue-700 dark:text-blue-300 font-medium">
+										Processing Steps ({m.processingSteps.length})
+									</summary>
+									<div className="mt-2 space-y-1">
+										{m.processingSteps.map((step, idx) => (
+											<div key={idx} className="text-gray-700 dark:text-gray-300 font-mono text-xs">
+												{step}
+											</div>
+										))}
+									</div>
+								</details>
+							</div>
+						)}
 						
 						{m.sources && m.sources.length > 0 && (
 							<div className="mt-2 max-w-[70%] space-y-2">

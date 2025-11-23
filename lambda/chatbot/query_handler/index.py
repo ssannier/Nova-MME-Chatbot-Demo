@@ -64,26 +64,41 @@ def handler(event, context):
         
         print(f"Processing query: {query[:100]}... (dimension={dimension}, hierarchical={use_hierarchical})")
         
+        # Track processing steps for transparency
+        processing_steps = []
+        
         # Step 1: Embed the query
+        processing_steps.append(f"🔍 Embedding query at {dimension} dimensions using Nova MME...")
         query_embedding = embed_query(query, dimension)
+        processing_steps.append(f"✓ Query embedded successfully")
         
         # Step 2: Search for relevant documents
         if use_hierarchical and HIERARCHICAL_CONFIG:
-            sources = hierarchical_search(query_embedding, k)
+            first_dim = HIERARCHICAL_CONFIG.get('first_pass_dimension', 256)
+            second_dim = HIERARCHICAL_CONFIG.get('second_pass_dimension', 1024)
+            processing_steps.append(f"🔎 Hierarchical search: First pass at {first_dim}d (fast, broad)...")
+            sources = hierarchical_search(query_embedding, k, processing_steps)
+            processing_steps.append(f"🎯 Second pass at {second_dim}d (precise refinement)...")
         else:
+            processing_steps.append(f"🔎 Searching {dimension}d vector index...")
             sources = simple_search(query_embedding, dimension, k)
+            processing_steps.append(f"✓ Found {len(sources)} potential matches")
         
         # Filter sources by similarity threshold (remove low-relevance results)
         SIMILARITY_THRESHOLD = 0.60  # 60% minimum similarity
         filtered_sources = [s for s in sources if s.get('similarity', 0) >= SIMILARITY_THRESHOLD]
         
         print(f"Found {len(sources)} sources, {len(filtered_sources)} above {SIMILARITY_THRESHOLD:.0%} threshold")
+        processing_steps.append(f"✓ Filtered to {len(filtered_sources)} highly relevant sources (>{SIMILARITY_THRESHOLD:.0%} similarity)")
         
         # Step 3: Format prompt with context
+        processing_steps.append(f"📝 Preparing context from {len(filtered_sources)} sources...")
         prompt = format_prompt(query, filtered_sources)
         
         # Step 4: Get response from Claude
+        processing_steps.append(f"🤖 Generating response with Claude ({LLM_MODEL_ID})...")
         answer = call_claude(prompt)
+        processing_steps.append(f"✓ Response generated successfully")
         
         # Step 5: Format response for frontend
         formatted_sources = format_sources(filtered_sources)
@@ -97,7 +112,8 @@ def handler(event, context):
             'model': LLM_MODEL_ID,
             'query': query,
             'dimension': dimension,
-            'resultsFound': len(filtered_sources)
+            'resultsFound': len(filtered_sources),
+            'processingSteps': processing_steps  # Add processing transparency
         }
         
         return create_response(200, response_data)
@@ -159,7 +175,7 @@ def simple_search(query_embedding: List[float], dimension: int, k: int) -> List[
     return sources
 
 
-def hierarchical_search(query_embedding: List[float], final_k: int) -> List[Dict[str, Any]]:
+def hierarchical_search(query_embedding: List[float], final_k: int, processing_steps: List[str] = None) -> List[Dict[str, Any]]:
     """
     Hierarchical search: fast coarse search followed by precise refinement
     
@@ -177,10 +193,15 @@ def hierarchical_search(query_embedding: List[float], final_k: int) -> List[Dict
     first_k = HIERARCHICAL_CONFIG.get('first_pass_k', 20)
     
     print(f"Hierarchical search - First pass: {first_dim}d, k={first_k}")
+    if processing_steps is not None:
+        processing_steps.append(f"  → Searching {first_dim}d index for top {first_k} candidates...")
     
     # Truncate query embedding to first pass dimension
     first_embedding = query_embedding[:first_dim]
     first_results = simple_search(first_embedding, first_dim, first_k)
+    
+    if processing_steps is not None:
+        processing_steps.append(f"  ✓ Found {len(first_results)} candidates from fast search")
     
     # Second pass: Precise search at higher dimension
     # Note: We search again rather than rerank because S3 Vectors doesn't return vector data
@@ -188,10 +209,15 @@ def hierarchical_search(query_embedding: List[float], final_k: int) -> List[Dict
     second_k = HIERARCHICAL_CONFIG.get('second_pass_k', final_k)
     
     print(f"Hierarchical search - Second pass: {second_dim}d, k={second_k}")
+    if processing_steps is not None:
+        processing_steps.append(f"  → Searching {second_dim}d index for top {second_k} precise matches...")
     
     # Search at higher dimension for better precision
     second_embedding = query_embedding[:second_dim]
     refined_results = simple_search(second_embedding, second_dim, second_k)
+    
+    if processing_steps is not None:
+        processing_steps.append(f"  ✓ Refined to {len(refined_results)} highly relevant matches")
     
     return refined_results
 
