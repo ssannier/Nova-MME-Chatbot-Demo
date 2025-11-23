@@ -15,7 +15,13 @@ type Message = {
 };
 
 const ChatWindow: React.FC = () => {
-	const [messages, setMessages] = useState<Message[]>([]);
+	const [messages, setMessages] = useState<Message[]>([
+		{
+			id: "welcome",
+			role: "assistant",
+			text: "Hello! Ask me about anything in the documents from the CIC Google Drive and I'll do my best to answer.",
+		},
+	]);
 	const [input, setInput] = useState("");
 	const [sending, setSending] = useState(false);
 	const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -113,8 +119,6 @@ const ChatWindow: React.FC = () => {
 			</div>
 
 			<div className="flex-1 overflow-auto p-6 space-y-4">
-				{messages.length === 0 && <div className="text-center text-gray-500">Ask me anything — start the conversation.</div>}
-
 				{messages.map((m) => (
 					<div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start flex-col"}>
 						<div
