@@ -33,6 +33,7 @@ htmlcov/
 *.swp
 *.swo
 *~
+.kiro
 
 # OS
 .DS_Store
@@ -59,26 +60,3 @@ logs/
 # Temp files
 nul
 sts get-caller-identity
-
-# Lambda dependencies (installed locally for CDK packaging)
-# Exclude all pip-installed packages in Lambda directories
-lambda/**/boto3/
-lambda/**/botocore/
-lambda/**/jmespath/
-lambda/**/dateutil/
-lambda/**/s3transfer/
-lambda/**/six.py
-lambda/**/urllib3/
-lambda/**/PyMuPDF*
-lambda/**/fitz/
-lambda/**/numpy/
-lambda/**/numpy.libs/
-lambda/**/bin/
-lambda/**/*.dist-info/
-lambda/**/*.so
-lambda/**/*.so.*
-tests/unit/__pycache__/test_processor_lambda.cpython-314-pytest-9.0.1.pyc
-check_api.py
-get_logs.ps1
-FILTER_RESEARCH.md
-test_s3vectors_filter.py
