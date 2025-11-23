@@ -33,6 +33,14 @@ const ChatWindow: React.FC = () => {
 		setInput("");
 		setSending(true);
 
+		// Add "Thinking..." placeholder
+		const thinkingMsg: Message = {
+			id: String(Date.now() + 1),
+			role: "assistant",
+			text: "",
+		};
+		setMessages((s) => [...s, thinkingMsg]);
+
 		try {
 			const apiUrl = (process.env.NEXT_PUBLIC_QUERY_URL as string) || "/api/chat";
 			const res = await fetch(apiUrl, {
@@ -45,16 +53,27 @@ const ChatWindow: React.FC = () => {
 
 			const data = await res.json();
 			const assistantText = data?.answer || data?.reply || String(data?.text || "No response");
-			const assistantMsg: Message = { 
-				id: String(Date.now() + 1), 
-				role: "assistant", 
-				text: assistantText,
-				sources: data?.sources || [],
-				processingSteps: data?.processingSteps || []
-			};
-			setMessages((s) => [...s, assistantMsg]);
+			
+			// Replace thinking message with actual response
+			setMessages((s) => {
+				const withoutThinking = s.slice(0, -1);
+				return [
+					...withoutThinking,
+					{
+						id: String(Date.now() + 2),
+						role: "assistant",
+						text: assistantText,
+						sources: data?.sources || [],
+						processingSteps: data?.processingSteps || [],
+					},
+				];
+			});
 		} catch (err) {
-			setMessages((s) => [...s, { id: String(Date.now() + 2), role: "assistant", text: `Error: ${String(err)}` }]);
+			// Replace thinking message with error
+			setMessages((s) => {
+				const withoutThinking = s.slice(0, -1);
+				return [...withoutThinking, { id: String(Date.now() + 3), role: "assistant", text: `Error: ${String(err)}` }];
+			});
 		} finally {
 			setSending(false);
 		}
@@ -104,7 +123,18 @@ const ChatWindow: React.FC = () => {
 								" px-4 py-3 max-w-[70%]"
 							}
 						>
-							<div className="whitespace-pre-wrap">{m.text}</div>
+							{m.text ? (
+								<div className="whitespace-pre-wrap">{m.text}</div>
+							) : (
+								<div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
+									<div className="flex gap-1">
+										<span className="animate-bounce" style={{ animationDelay: "0ms" }}>●</span>
+										<span className="animate-bounce" style={{ animationDelay: "150ms" }}>●</span>
+										<span className="animate-bounce" style={{ animationDelay: "300ms" }}>●</span>
+									</div>
+									<span>Thinking...</span>
+								</div>
+							)}
 						</div>
 						
 						{m.processingSteps && m.processingSteps.length > 0 && (
