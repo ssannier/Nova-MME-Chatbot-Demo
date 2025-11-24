@@ -170,22 +170,28 @@ class EmbedderStack(Stack):
             )
         )
 
-        # S3 Vectors permissions
+        # S3 Vectors permissions for storing embeddings
+        # Note: S3 Vectors uses a different ARN format than regular S3
+        vector_bucket_name = config['buckets']['vector_bucket']
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
                     "s3vectors:PutVectors",
                     "s3vectors:GetVectors",
-                    "s3vectors:QueryVectors",
                     "s3vectors:DeleteVectors",
+                    "s3vectors:DescribeIndex",
+                    "s3vectors:ListIndexes",
                 ],
                 resources=[
-                    f"arn:aws:s3vectors:{self.region}:{self.account}:bucket/{config['buckets']['vector_bucket']}/*",
+                    # Bucket-level permissions
+                    f"arn:aws:s3vectors:{self.region}:{self.account}:bucket/{vector_bucket_name}",
+                    # Object-level permissions (vectors within indexes)
+                    f"arn:aws:s3vectors:{self.region}:{self.account}:bucket/{vector_bucket_name}/*",
                 ],
             )
         )
 
-        # S3 permissions
+        # S3 permissions for regular buckets (source, output, and vector bucket for metadata)
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
@@ -197,28 +203,9 @@ class EmbedderStack(Stack):
                 resources=[
                     self.source_bucket.bucket_arn,
                     f"{self.source_bucket.bucket_arn}/*",
-                    self.vector_bucket.bucket_arn,
-                    f"{self.vector_bucket.bucket_arn}/*",
                     self.output_bucket.bucket_arn,
                     f"{self.output_bucket.bucket_arn}/*",
                 ],
-            )
-        )
-
-        # S3 Vectors permissions for storing and querying embeddings
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "s3:CreateVectorIndex",
-                    "s3:PutObject",  # Already included above but needed for vector indexes
-                    "s3:QueryVectors",
-                    "s3:DescribeVectorIndex",
-                    "s3:ListVectorIndexes",
-                    "s3vector:PutVector",
-                    "s3vector:QueryVectors",
-                    "s3vector:DescribeIndex",
-                ],
-                resources=["*"],
             )
         )
 

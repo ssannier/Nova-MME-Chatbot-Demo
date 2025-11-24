@@ -133,6 +133,7 @@ class ChatbotStack(Stack):
         )
 
         # S3 Vectors permissions for querying embeddings
+        # Note: S3 Vectors uses a different ARN format than regular S3
         role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
@@ -142,22 +143,10 @@ class ChatbotStack(Stack):
                     "s3vectors:ListIndexes",
                 ],
                 resources=[
+                    # Bucket-level permissions
                     f"arn:aws:s3vectors:{self.region}:{self.account}:bucket/{self.vector_bucket.bucket_name}",
+                    # Object-level permissions (vectors within indexes)
                     f"arn:aws:s3vectors:{self.region}:{self.account}:bucket/{self.vector_bucket.bucket_name}/*",
-                ],
-            )
-        )
-        
-        # S3 permissions for reading vector bucket objects (if needed)
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "s3:GetObject",
-                    "s3:ListBucket",
-                ],
-                resources=[
-                    self.vector_bucket.bucket_arn,
-                    f"{self.vector_bucket.bucket_arn}/*",
                 ],
             )
         )
