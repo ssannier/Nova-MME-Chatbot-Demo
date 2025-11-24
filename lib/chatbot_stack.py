@@ -17,6 +17,7 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_amplify as amplify,
     aws_secretsmanager as secretsmanager,
+    aws_logs as logs,
     CfnOutput,
 )
 from constructs import Construct
@@ -187,6 +188,7 @@ class ChatbotStack(Stack):
             role=role,
             timeout=Duration.seconds(60),
             memory_size=1024,
+            log_retention=logs.RetentionDays.THREE_DAYS,  # Auto-delete logs after 3 days
             environment={
                 "VECTOR_BUCKET": self.vector_bucket.bucket_name,
                 "EMBEDDING_MODEL_ID": config["embedding"]["model_id"],

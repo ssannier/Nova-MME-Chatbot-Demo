@@ -24,6 +24,14 @@ except ImportError:
     PDF_SUPPORT = False
     print("Warning: PyMuPDF not installed, PDF support disabled")
 
+# python-docx import (optional for testing)
+try:
+    from docx import Document
+    DOCX_SUPPORT = True
+except ImportError:
+    DOCX_SUPPORT = False
+    print("Warning: python-docx not installed, .docx support disabled")
+
 # Initialize clients
 s3_client = boto3.client('s3')
 bedrock_runtime = boto3.client('bedrock-runtime')
@@ -46,7 +54,9 @@ AUDIO_FORMATS = {
     '.mp3': 'mp3', '.wav': 'wav', '.ogg': 'ogg'
 }
 TEXT_FORMATS = ['.txt', '.md', '.json', '.csv']
+DOCUMENT_FORMATS = ['.docx', '.doc']  # Extracted as text
 # PDFs are handled separately - converted to images then processed with DOCUMENT_IMAGE
+# Google Docs format (.gdoc) is a pointer file, not the actual document - users must export to .docx first
 
 
 def handler(event, context):
@@ -77,41 +87,117 @@ def handler(event, context):
         # Determine file type
         file_extension = os.path.splitext(key)[1].lower()
         
-        # Special handling for PDFs - convert to images first
-        if file_extension == '.pdf':
+        # Special handling for Word documents - extract text and process as TEXT
+        if file_extension in DOCUMENT_FORMATS:
+            if not DOCX_SUPPORT:
+                raise Exception("python-docx not installed, cannot process .docx files")
+            
+            print(f"Extracting text from Word document...")
+            
+            # Download document to temp file
+            local_path = f"/tmp/{os.path.basename(key)}"
+            s3_client.download_file(bucket, key, local_path)
+            
+            # Extract text
+            text_content = extract_docx_text(local_path)
+            print(f"Extracted {len(text_content)} characters from document")
+            
+            # Upload extracted text to temp location
+            text_key = f"docx-text/{metadata['objectId']}.txt"
+            s3_client.put_object(
+                Bucket=bucket,
+                Key=text_key,
+                Body=text_content.encode('utf-8'),
+                ContentType='text/plain'
+            )
+            print(f"Uploaded extracted text to s3://{bucket}/{text_key}")
+            
+            # Update metadata to point to text file
+            metadata['originalDocUri'] = metadata['sourceS3Uri']
+            metadata['sourceS3Uri'] = f"s3://{bucket}/{text_key}"
+            metadata['isDocx'] = True
+            metadata['originalFileName'] = metadata['fileName']
+            
+            # Process as text
+            model_input = create_model_input(bucket, text_key, '.txt')
+            print(f"Created model input for extracted text")
+            
+            # Start async invocation
+            output_s3_uri = f"s3://{OUTPUT_BUCKET}/{metadata['objectId']}/"
+            invocation_arn = start_async_invocation(model_input, output_s3_uri)
+            print(f"Started async invocation: {invocation_arn}")
+            
+            return {
+                'statusCode': 200,
+                'invocationArn': invocation_arn,
+                'outputS3Uri': output_s3_uri,
+                'metadata': metadata,
+                'status': 'IN_PROGRESS'
+            }
+        
+        # Special handling for PDFs - convert to images and process each page
+        elif file_extension == '.pdf':
             print(f"Converting PDF to images...")
             image_uris = convert_pdf_to_images(bucket, key, metadata['objectId'])
             print(f"Converted PDF to {len(image_uris)} images")
             
-            # Process first page as document image
-            # Note: Multi-page PDFs will need multiple invocations or batch processing
-            # For now, we'll process the first page
-            model_input = create_model_input(bucket, image_uris[0].replace(f"s3://{bucket}/", ""), '.png')
-            model_input['segmentedEmbeddingParams']['image']['detailLevel'] = 'DOCUMENT_IMAGE'
+            # Process ALL pages - return list of jobs for Step Functions to handle
+            pdf_pages = []
             
-            # Store PDF page info in metadata
-            metadata['isPdf'] = True
-            metadata['totalPages'] = len(image_uris)
-            metadata['processedPage'] = 1
+            for page_num, image_uri in enumerate(image_uris, start=1):
+                # Create model input for this page
+                image_key = image_uri.replace(f"s3://{bucket}/", "")
+                model_input = create_model_input(bucket, image_key, '.png')
+                model_input['segmentedEmbeddingParams']['image']['detailLevel'] = 'DOCUMENT_IMAGE'
+                
+                # Create page-specific metadata
+                page_metadata = metadata.copy()
+                page_metadata['isPdf'] = True
+                page_metadata['totalPages'] = len(image_uris)
+                page_metadata['processedPage'] = page_num
+                page_metadata['objectId'] = f"{metadata['objectId']}_page_{page_num}"
+                
+                # Start async invocation for this page
+                output_s3_uri = f"s3://{OUTPUT_BUCKET}/{page_metadata['objectId']}/"
+                invocation_arn = start_async_invocation(model_input, output_s3_uri)
+                print(f"Started async invocation for page {page_num}: {invocation_arn}")
+                
+                pdf_pages.append({
+                    'invocationArn': invocation_arn,
+                    'outputS3Uri': output_s3_uri,
+                    'metadata': page_metadata
+                })
+            
+            # Return all pages - Step Functions will need to process each
+            # For now, return first page in standard format for compatibility
+            return {
+                'statusCode': 200,
+                'invocationArn': pdf_pages[0]['invocationArn'],
+                'outputS3Uri': pdf_pages[0]['outputS3Uri'],
+                'metadata': pdf_pages[0]['metadata'],
+                'status': 'IN_PROGRESS',
+                'pdfPages': pdf_pages,  # All pages for potential batch processing
+                'totalPages': len(image_uris)
+            }
         else:
             # Regular file processing
             model_input = create_model_input(bucket, key, file_extension)
             print(f"Created model input for type: {metadata['fileType']}")
-        
-        # Start async invocation
-        # Output URI must point to a directory (end with /)
-        output_s3_uri = f"s3://{OUTPUT_BUCKET}/{metadata['objectId']}/"
-        invocation_arn = start_async_invocation(model_input, output_s3_uri)
-        print(f"Started async invocation: {invocation_arn}")
-        
-        # Return data for Step Functions
-        return {
-            'statusCode': 200,
-            'invocationArn': invocation_arn,
-            'outputS3Uri': output_s3_uri,
-            'metadata': metadata,
-            'status': 'IN_PROGRESS'
-        }
+            
+            # Start async invocation
+            # Output URI must point to a directory (end with /)
+            output_s3_uri = f"s3://{OUTPUT_BUCKET}/{metadata['objectId']}/"
+            invocation_arn = start_async_invocation(model_input, output_s3_uri)
+            print(f"Started async invocation: {invocation_arn}")
+            
+            # Return data for Step Functions
+            return {
+                'statusCode': 200,
+                'invocationArn': invocation_arn,
+                'outputS3Uri': output_s3_uri,
+                'metadata': metadata,
+                'status': 'IN_PROGRESS'
+            }
         
     except Exception as e:
         print(f"Error processing file: {str(e)}")
@@ -218,6 +304,45 @@ def create_model_input(bucket: str, key: str, file_extension: str) -> Dict[str, 
     return model_input
 
 
+def extract_docx_text(docx_path: str) -> str:
+    """
+    Extract plain text from .docx file
+    
+    Args:
+        docx_path: Local path to .docx file
+    
+    Returns:
+        Extracted text content
+    
+    Note: .doc (old Word format) requires conversion to .docx first.
+    For demo purposes, we only support .docx natively.
+    """
+    try:
+        doc = Document(docx_path)
+        
+        # Extract text from all paragraphs
+        paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
+        
+        # Extract text from tables
+        table_text = []
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = ' | '.join(cell.text.strip() for cell in row.cells)
+                if row_text.strip():
+                    table_text.append(row_text)
+        
+        # Combine all text
+        all_text = '\n\n'.join(paragraphs)
+        if table_text:
+            all_text += '\n\n--- Tables ---\n\n' + '\n'.join(table_text)
+        
+        return all_text
+        
+    except Exception as e:
+        print(f"Error extracting text from .docx: {e}")
+        raise
+
+
 def convert_pdf_to_images(bucket: str, key: str, object_id: str) -> List[str]:
     """
     Convert PDF pages to images and upload to S3
@@ -248,8 +373,8 @@ def convert_pdf_to_images(bucket: str, key: str, object_id: str) -> List[str]:
             # Convert to PNG bytes
             img_bytes = pix.tobytes("png")
             
-            # Upload to S3 in a temp location
-            image_key = f"pdf-temp/{object_id}/page_{page_num + 1}.png"
+            # Upload to S3 in a permanent location (needed for chatbot to fetch later)
+            image_key = f"pdf-pages/{object_id}/page_{page_num + 1}.png"
             s3_client.put_object(
                 Bucket=bucket,
                 Key=image_key,

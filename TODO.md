@@ -60,7 +60,7 @@
   - Lambda function deployed ✅
   - Share API URL with frontend dev ⏳
 
-- [ ] **Upload test files**
+- [x] **Upload test files**
   - Upload sample files (1 of each type: image, video, audio, text)
   - Monitor Step Functions execution in AWS Console
   - Verify embeddings stored in S3 Vector bucket
@@ -69,32 +69,22 @@
   - [x] Send test query via API Gateway ✅
   - [x] Verify response from chatbot ✅
   - [x] Test simple search (works!) ✅
-  - [ ] Test hierarchical search (throttled - need to test with delay)
+  - [x] Test hierarchical search
   - [x] Test through frontend UI ✅
 
 ### Phase 5: Documentation & Demo Prep
-- [ ] **Update architecture diagram** (`docs/initial/architecture-diagram.png`)
+- [x] **Update architecture diagram** (`docs/initial/architecture-diagram.png`)
   - Add Query Handler Lambda
   - Show content retrieval flow (S3 source bucket → Lambda → Claude)
   - Show hierarchical search flow
   - Update to reflect 4 S3 Vector indexes
   - Show metadata flow through Step Functions
 
-- [ ] **Update README.md** with:
+- [x] **Update README.md** with:
   - Deployment instructions
   - Testing instructions
   - API usage examples
   - Architecture diagram reference
-
-- [ ] **Create demo script**
-  - Sample queries to showcase
-  - MRL comparison examples
-  - Performance metrics to highlight
-
-- [ ] **Prepare presentation materials** (if needed)
-  - Updated architecture diagram
-  - MRL explanation
-  - Performance comparisons
 
 ---
 
@@ -105,12 +95,12 @@
   - Just released to Bedrock - should provide better responses
   - Only change prod, keep dev on 3.5 for cost savings
 
-- [ ] **Review and adjust config values**
+- [x] **Review and adjust config values**
   - Verify bucket names are correct
   - Adjust search parameters if needed
   - Test with different dimension defaults
 
-- [ ] **Security review**
+- [x] **Security review**
   - Ensure no secrets in code
   - Review IAM permissions (principle of least privilege)
   - Add API Gateway authentication if needed
@@ -132,69 +122,55 @@
 ## 🎨 UX Improvements
 
 ### Chatbot Interface Enhancements
-- [ ] **Add welcome message to chatbot**
+- [x] **Add welcome message to chatbot**
   - Display introductory message when chat loads
   - Prompt user to ask about files in the S3 bucket
   - Example: "Hi! I can help you search through files in the [bucket-name] S3 bucket. Ask me about images, videos, documents, or audio files!"
   - Update: `frontend/components/ChatWindow.tsx` to show initial system message
 
-- [ ] **Improve "no results" response**
-  - Create structured fallback response when no relevant sources found
-  - Should be short and helpful (not apologetic rambling)
-  - Example format:
-    ```
-    I couldn't find relevant information in the knowledge base to answer that question.
-    
-    Try:
-    - Asking about specific files or content types
-    - Using different keywords
-    - Checking if files have been uploaded to the bucket
-    ```
-  - Update: `lambda/chatbot/query_handler/index.py` prompt formatting
+- [x] **Improve "no results" response** ✅
+  - [x] Created structured fallback response when no relevant sources found
+  - [x] Short and helpful (not apologetic rambling)
+  - [x] Two scenarios handled:
+    - No sources at all (empty knowledge base)
+    - Sources found but below 60% similarity threshold
+  - [x] Provides actionable suggestions
+  - [x] Updated: `lambda/chatbot/query_handler/index.py`
+  - [x] Added tests: 3 new tests, all passing
 
 ## 💡 Future Enhancements (Post-Demo)
 
-### Vector Storage Migration
-- [x] **Migrate from placeholder S3 to S3 Vectors** ✅
-  - [x] Added cdk-s3-vectors construct library to requirements
-  - [x] Updated CDK to create S3 Vector bucket using construct
-  - [x] Created 4 vector indexes (256d, 384d, 1024d, 3072d) in CDK
-  - [x] Updated IAM permissions for S3 Vectors operations
-  - [x] Updated Store Embeddings Lambda to use 'vector' field
-  - [x] Updated Query Handler Lambda to use query_vectors API
-  - [ ] Install cdk-s3-vectors: `pip install -r requirements.txt`
-  - [ ] Deploy and test end-to-end
-  - [ ] Verify all 4 dimensions work with S3 Vectors
-  - See: `docs/S3_VECTORS_DEPLOYMENT.md` for deployment guide
+### Multimodal Content Integration
+- [x] **Fetch and pass actual media content to Claude** ✅
+  - [x] Implemented `fetch_image_from_s3()` to retrieve images from S3
+  - [x] Implemented `prepare_multimodal_content()` to format content blocks
+  - [x] Updated `call_claude_multimodal()` to accept image + text blocks
+  - [x] Added base64 encoding for images in Claude API
+  - [x] Added 5MB size limit check for images
+  - [x] Integrated PDF page images for semantic understanding
+  - [x] Integrated regular images (JPG, PNG, GIF, WebP) for semantic understanding
+  - [x] Added comprehensive test coverage (29 tests passing)
+  - [x] Claude can now read actual PDF content and analyze all images
+  - [x] All IMAGE modality content (PDFs and regular images) passed to Claude
+  - Note: Video/audio still use metadata only (future: extract keyframes/transcripts)
 
-### Research & Exploration
-- [ ] **Request S3 Vectors preview access**
-  - S3 Vectors is currently in preview
-  - Request access through AWS account team
-  - Test with Nova MME embeddings
-  - Verify MRL support (4 tables for 4 dimensions)
-  - Document API usage and CDK support
+### Document Format Support
+- [x] **Add .docx support (text extraction)** ✅
+  - [x] Implemented text extraction with python-docx
+  - [x] Extracts paragraphs and tables
+  - [x] Uploads as text file for Nova MME embedding
+  - [x] Added test coverage
+  - ⚠️ **Limitation:** Loses formatting and embedded images
+  - **Future:** Convert to images using LibreOffice for full visual preservation (see `docs/DOCX_IMPLEMENTATION_PLAN.md`)
 
-### Technical Improvements
-- [ ] **Fetch and pass actual media content to Claude**
-  - Currently only passing metadata for images/video/audio
-  - Claude multimodal can analyze images directly
-  - For video/audio: Extract keyframes or transcripts
-  - Update `format_prompt()` in query_handler to fetch and encode media
-  - Use base64 encoding for images in Claude API
-  - Consider caching frequently accessed media
-- [ ] Add retry logic to Step Functions
-- [ ] Add CloudWatch alarms for failed embeddings
-- [ ] Add cost tracking/monitoring
-- [ ] Consider adding DynamoDB for metadata storage
-- [ ] Add caching layer for frequent queries
-- [ ] Implement query history/analytics
-- [ ] Add user authentication
-- [ ] Create admin dashboard for monitoring
-- [ ] Add support for batch queries
-- [ ] Implement feedback mechanism for result quality
+- [ ] **Add PowerPoint support** (.ppt, .pptx)
+  - Similar approach: LibreOffice → PDF → Images
+  - Each slide becomes a separate image
+  - Lower priority than Word docs
 
----
+- [ ] **Add Excel support** (.xls, .xlsx)
+  - More complex: tables, formulas, multiple sheets
+  - Consider text extraction vs image conversion
 
 ## 📊 Current Status
 
@@ -205,23 +181,11 @@
 - [x] Lambda 2: Check Job Status
 - [x] Lambda 3: Store Embeddings (with MRL)
 - [x] Lambda 4: Query Handler (with content retrieval)
-- [x] Step Functions state machine
+- [x] Step Functions state machine with Map state for multi-page PDFs
+- [x] Multi-page PDF processing (all pages tracked and stored)
 - [x] Shared utilities (MRL truncation/normalization)
-- [x] Comprehensive test suite (107+ tests, 94% coverage)
+- [x] Comprehensive test suite (110+ tests, 87% coverage)
 - [x] Configuration files (dev/prod)
 - [x] Documentation (CDK structure, embedder summary, CORS explained)
 - [x] Frontend (Next.js chatbot by frontend dev)
 - [x] IAM permissions (source bucket access for Query Handler)
-
-### 🚧 Ready for Deployment
-- [x] Run all tests ✅
-- [ ] Deploy Embedder Stack
-- [ ] Deploy Chatbot Stack
-- [ ] Configure frontend with API URL
-- [ ] Upload test files
-- [ ] End-to-end testing
-
-### ⏳ Post-Deployment
-- [ ] Demo preparation
-- [ ] Update to Claude 4.5 Sonnet
-- [ ] Performance tuning

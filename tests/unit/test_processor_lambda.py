@@ -80,7 +80,7 @@ class TestCreateModelInput:
         image_config = result['segmentedEmbeddingParams']['image']
         assert image_config['format'] == 'png'
         assert image_config['source']['s3Location']['uri'] == 's3://bucket/image.png'
-        assert image_config['detailLevel'] == 'STANDARD_IMAGE'
+        assert image_config['detailLevel'] == 'DOCUMENT_IMAGE'  # All images use DOCUMENT_IMAGE for better understanding
     
     def test_image_jpg(self):
         """Test JPG image format"""
@@ -226,8 +226,10 @@ class TestCreateModelInput:
         result = processor.create_model_input('bucket', 'data.csv', '.csv')
         assert 'text' in result['segmentedEmbeddingParams']
     
-    # NOTE: PDFs are handled specially in the handler (converted to images first)
-    # They don't go through create_model_input directly
+    # NOTE: PDFs and .docx are handled specially in the handler
+    # PDFs: converted to images first
+    # .docx: text extracted and uploaded as .txt
+    # They don't go through create_model_input with their original extension
     
     # ERROR HANDLING
     def test_unsupported_file_type(self):
@@ -244,6 +246,51 @@ class TestCreateModelInput:
         # Both should produce same format
         assert result_upper['segmentedEmbeddingParams']['image']['format'] == 'jpeg'
         assert result_lower['segmentedEmbeddingParams']['image']['format'] == 'jpeg'
+
+
+class TestExtractDocxText:
+    """Tests for extract_docx_text function"""
+    
+    def test_extracts_text_from_docx(self):
+        """Test text extraction from .docx file"""
+        # This test requires python-docx to be installed
+        if not processor.DOCX_SUPPORT:
+            pytest.skip("python-docx not installed")
+        
+        # Create a simple test .docx in memory
+        from docx import Document
+        import tempfile
+        
+        doc = Document()
+        doc.add_paragraph("This is a test document.")
+        doc.add_paragraph("It has multiple paragraphs.")
+        
+        # Add a table
+        table = doc.add_table(rows=2, cols=2)
+        table.rows[0].cells[0].text = "Header 1"
+        table.rows[0].cells[1].text = "Header 2"
+        table.rows[1].cells[0].text = "Data 1"
+        table.rows[1].cells[1].text = "Data 2"
+        
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as tmp:
+            doc.save(tmp.name)
+            tmp_path = tmp.name
+        
+        try:
+            # Extract text
+            result = processor.extract_docx_text(tmp_path)
+            
+            # Verify content
+            assert "This is a test document" in result
+            assert "multiple paragraphs" in result
+            assert "Header 1" in result
+            assert "Data 1" in result
+            
+        finally:
+            # Clean up
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
 
 class TestStartAsyncInvocation:

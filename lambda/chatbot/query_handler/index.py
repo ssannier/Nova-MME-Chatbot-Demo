@@ -4,14 +4,16 @@ Lambda: Query Handler
 Handles user queries for the Nova MME chatbot:
 1. Embeds user query using Nova MME (synchronous)
 2. Searches S3 Vector indexes (with optional hierarchical search)
-3. Formats prompt with retrieved context
-4. Calls Claude for response generation
-5. Returns formatted response to frontend
+3. Fetches actual media content (images, PDFs) from S3
+4. Formats multimodal prompt with retrieved context
+5. Calls Claude for response generation
+6. Returns formatted response to frontend
 """
 
 import json
 import os
 import boto3
+import base64
 from typing import Dict, Any, List
 from datetime import datetime
 
@@ -91,13 +93,30 @@ def handler(event, context):
         print(f"Found {len(sources)} sources, {len(filtered_sources)} above {SIMILARITY_THRESHOLD:.0%} threshold")
         processing_steps.append(f"✓ Filtered to {len(filtered_sources)} highly relevant sources (>{SIMILARITY_THRESHOLD:.0%} similarity)")
         
-        # Step 3: Format prompt with context
-        processing_steps.append(f"📝 Preparing context from {len(filtered_sources)} sources...")
-        prompt = format_prompt(query, filtered_sources)
+        # Handle no results case
+        if len(filtered_sources) == 0:
+            processing_steps.append(f"⚠️ No relevant sources found above {SIMILARITY_THRESHOLD:.0%} similarity threshold")
+            
+            # Return helpful fallback response
+            no_results_response = create_no_results_response(query, len(sources))
+            
+            return create_response(200, {
+                'answer': no_results_response,
+                'sources': [],
+                'model': LLM_MODEL_ID,
+                'query': query,
+                'dimension': dimension,
+                'resultsFound': 0,
+                'processingSteps': processing_steps
+            })
+        
+        # Step 3: Fetch media content and format prompt
+        processing_steps.append(f"📝 Fetching media content and preparing context...")
+        multimodal_content = prepare_multimodal_content(query, filtered_sources)
         
         # Step 4: Get response from Claude
         processing_steps.append(f"🤖 Generating response with Claude ({LLM_MODEL_ID})...")
-        answer = call_claude(prompt)
+        answer = call_claude_multimodal(multimodal_content)
         processing_steps.append(f"✓ Response generated successfully")
         
         # Step 5: Format response for frontend
@@ -457,9 +476,139 @@ def get_text_content(source_uri: str, metadata: Dict[str, Any]) -> str:
         return ""
 
 
-def call_claude(prompt: str) -> str:
+def prepare_multimodal_content(query: str, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Call Claude for response generation
+    Prepare multimodal content blocks for Claude
+    
+    Fetches actual media content (images, PDFs) and formats as base64
+    Returns array of content blocks (images + text)
+    """
+    content_blocks = []
+    text_context_parts = []
+    
+    for i, source in enumerate(sources, 1):
+        metadata = source.get('metadata', {})
+        filename = metadata.get('fileName', 'Unknown')
+        modality = metadata.get('modalityType', 'Unknown')
+        source_uri = metadata.get('sourceS3Uri', '')
+        
+        # For images (including PDF pages), fetch and encode
+        if modality == 'IMAGE':
+            is_pdf = metadata.get('isPdf', False)
+            page_num = metadata.get('processedPage')
+            
+            # Fetch image from S3
+            image_data = fetch_image_from_s3(source_uri)
+            
+            if image_data:
+                # Base64 encode
+                image_b64 = base64.b64encode(image_data).decode('utf-8')
+                
+                # Determine media type from source URI
+                media_type = 'image/png' if source_uri.endswith('.png') else 'image/jpeg'
+                
+                # Add image block
+                content_blocks.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": image_b64
+                    }
+                })
+                
+                # Add text description
+                if is_pdf and page_num:
+                    text_context_parts.append(f"Image {len(content_blocks)}: Page {page_num} from {filename}")
+                else:
+                    text_context_parts.append(f"Image {len(content_blocks)}: {filename}")
+            else:
+                print(f"Warning: Could not fetch image from {source_uri}")
+        
+        # For text, include actual content
+        elif modality == 'TEXT':
+            content = get_text_content(source_uri, metadata)
+            if content:
+                text_context_parts.append(f"Text Source - {filename}:\n{content}")
+        
+        # For video/audio, include metadata
+        elif modality in ['VIDEO', 'AUDIO']:
+            segment_idx = metadata.get('segmentIndex', 0)
+            start_time = metadata.get('segmentStartSeconds', 0)
+            end_time = metadata.get('segmentEndSeconds', 0)
+            text_context_parts.append(
+                f"{modality} Source - {filename} (segment {segment_idx}: {start_time:.1f}s - {end_time:.1f}s)"
+            )
+    
+    # Build final text prompt
+    context_text = "\n\n".join(text_context_parts) if text_context_parts else "No additional context"
+    
+    prompt_text = f"""You are a helpful assistant answering questions based on a multimodal knowledge base.
+
+The images above show relevant content from the knowledge base. Additional context:
+{context_text}
+
+User Question: {query}
+
+Instructions:
+- Analyze the images carefully and extract all relevant information
+- For PDF pages, read any text visible in the images
+- Combine information from all sources to provide a comprehensive answer
+- Cite which sources you used (e.g., "According to Page 3 of document.pdf...")
+- Be specific and detailed based on what you can see in the images
+- If you need more information than what's provided, acknowledge the limitation
+
+Answer:"""
+    
+    # Add text prompt at the end
+    content_blocks.append({
+        "type": "text",
+        "text": prompt_text
+    })
+    
+    return content_blocks
+
+
+def fetch_image_from_s3(source_uri: str) -> bytes:
+    """
+    Fetch image from S3 and return as bytes
+    
+    Args:
+        source_uri: S3 URI (s3://bucket/key)
+    
+    Returns:
+        Image bytes, or None if fetch fails
+    """
+    if not source_uri or not source_uri.startswith('s3://'):
+        return None
+    
+    try:
+        # Parse S3 URI
+        parts = source_uri.replace('s3://', '').split('/', 1)
+        bucket = parts[0]
+        key = parts[1] if len(parts) > 1 else ''
+        
+        # Download image
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        image_data = response['Body'].read()
+        
+        # Check size (Claude has 5MB limit per image)
+        size_mb = len(image_data) / (1024 * 1024)
+        if size_mb > 5:
+            print(f"Warning: Image {source_uri} is {size_mb:.2f}MB, exceeds 5MB limit")
+            return None
+        
+        print(f"Fetched image from {source_uri} ({size_mb:.2f}MB)")
+        return image_data
+        
+    except Exception as e:
+        print(f"Error fetching image from {source_uri}: {e}")
+        return None
+
+
+def call_claude_multimodal(content_blocks: List[Dict[str, Any]]) -> str:
+    """
+    Call Claude with multimodal content (images + text)
     """
     max_tokens = int(os.environ.get('LLM_MAX_TOKENS', '2048'))
     temperature = float(os.environ.get('LLM_TEMPERATURE', '0.7'))
@@ -471,7 +620,7 @@ def call_claude(prompt: str) -> str:
         "messages": [
             {
                 "role": "user",
-                "content": prompt
+                "content": content_blocks  # Array of image and text blocks
             }
         ]
     }
@@ -558,6 +707,41 @@ def format_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         })
     
     return formatted
+
+
+def create_no_results_response(query: str, total_sources: int) -> str:
+    """
+    Create a helpful response when no relevant sources are found
+    
+    Args:
+        query: The user's query
+        total_sources: Total number of sources found (before filtering)
+    
+    Returns:
+        Helpful message with suggestions
+    """
+    if total_sources == 0:
+        # No sources found at all
+        return """I couldn't find any information in the knowledge base to answer that question.
+
+The knowledge base appears to be empty or your query didn't match any indexed content.
+
+Try:
+• Checking if files have been uploaded to the S3 bucket
+• Waiting a few minutes if files were just uploaded (processing takes 2-5 minutes)
+• Verifying the embedder pipeline completed successfully"""
+    
+    else:
+        # Sources found but below similarity threshold
+        return f"""I couldn't find relevant information in the knowledge base to answer that question.
+
+I found {total_sources} potential matches, but none were similar enough to your query (below 60% similarity threshold).
+
+Try:
+• Using different keywords or phrasing
+• Being more specific about what you're looking for
+• Asking about content you know exists in the uploaded files
+• Checking if the right files have been uploaded"""
 
 
 def create_response(status_code: int, data: Dict[str, Any]) -> Dict[str, Any]:

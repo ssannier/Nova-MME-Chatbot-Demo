@@ -20,17 +20,13 @@ from aws_cdk import (
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
     aws_s3_notifications as s3n,
+    aws_logs as logs,
 )
 from constructs import Construct
 import json
 
-# Import S3 Vectors construct
-try:
-    from cdk_s3_vectors import Bucket as VectorBucket, Index as VectorIndex
-except ImportError:
-    print("Warning: cdk-s3-vectors not installed. Run: pip install cdk-s3-vectors")
-    VectorBucket = None
-    VectorIndex = None
+# NOTE: S3 Vectors construct (cdk-s3-vectors) has critical bugs and is not production-ready.
+# We use regular S3 buckets and create vector indexes manually via AWS CLI after deployment.
 
 
 class EmbedderStack(Stack):
@@ -49,64 +45,30 @@ class EmbedderStack(Stack):
             auto_delete_objects=True,
             versioned=False,
             lifecycle_rules=[
-                s3.LifecycleRule(
-                    id="DeletePdfTempFiles",
-                    prefix="pdf-temp/",
-                    expiration=Duration.days(1),
-                    enabled=True,
-                )
+                # Note: pdf-pages/ are kept permanently for chatbot access
+                # Only truly temporary processing files should go in temp locations
             ],
         )
 
-        # Create S3 Vector bucket for embeddings using cdk-s3-vectors construct
+        # Reference manually-created S3 Vector bucket
+        # The S3 Vector bucket and indexes must be created manually via AWS CLI:
+        #   aws s3vectors create-vector-bucket --vector-bucket-name <name> --region us-east-1
+        #   aws s3vectors create-index --vector-bucket-name <name> --index-name embeddings-256d --dimension 256 --distance-metric cosine
+        #   aws s3vectors create-index --vector-bucket-name <name> --index-name embeddings-384d --dimension 384 --distance-metric cosine
+        #   aws s3vectors create-index --vector-bucket-name <name> --index-name embeddings-1024d --dimension 1024 --distance-metric cosine
+        #   aws s3vectors create-index --vector-bucket-name <name> --index-name embeddings-3072d --dimension 3072 --distance-metric cosine
         vector_bucket_name = config["buckets"]["vector_bucket"]
         
-        if VectorBucket is not None:
-            # Use the S3 Vectors construct library
-            vector_bucket_construct = VectorBucket(
-                self,
-                "VectorBucket",
-                vector_bucket_name=vector_bucket_name
-            )
-            
-            # Create 4 vector indexes for MRL dimensions
-            self.vector_indexes = {}
-            for dim in config["embedding"]["dimensions"]:
-                index_name = f"embeddings-{dim}d"
-                
-                VectorIndex(
-                    self,
-                    f"VectorIndex{dim}d",
-                    vector_bucket_name=vector_bucket_name,
-                    index_name=index_name,
-                    dimension=dim,
-                    distance_metric="cosine",
-                    data_type="float32"
-                )
-                
-                self.vector_indexes[dim] = index_name
-            
-            # Create reference for other stacks
-            self.vector_bucket = s3.Bucket.from_bucket_name(
-                self,
-                "VectorBucketRef",
-                vector_bucket_name
-            )
-        else:
-            # Fallback: Create regular S3 bucket if construct not available
-            print("Warning: Using regular S3 bucket. Install cdk-s3-vectors for proper S3 Vectors support.")
-            self.vector_bucket = s3.Bucket(
-                self,
-                "VectorBucket",
-                bucket_name=vector_bucket_name,
-                removal_policy=RemovalPolicy.DESTROY,
-                auto_delete_objects=True,
-                versioned=False,
-            )
-            
-            self.vector_indexes = {
-                dim: f"embeddings-{dim}d" for dim in config["embedding"]["dimensions"]
-            }
+        self.vector_bucket = s3.Bucket.from_bucket_name(
+            self,
+            "VectorBucket",
+            bucket_name=vector_bucket_name
+        )
+        
+        # Define vector index names (must match manually-created indexes)
+        self.vector_indexes = {
+            dim: f"embeddings-{dim}d" for dim in config["embedding"]["dimensions"]
+        }
 
         # Create S3 bucket for async job outputs
         self.output_bucket = s3.Bucket(
@@ -275,6 +237,7 @@ class EmbedderStack(Stack):
             role=role,
             timeout=Duration.minutes(5),
             memory_size=1024,  # Increased for PDF processing
+            log_retention=logs.RetentionDays.THREE_DAYS,  # Auto-delete logs after 3 days
             environment={
                 "EMBEDDING_DIMENSION": "3072",  # Always use max for MRL
                 "MODEL_ID": config["embedding"]["model_id"],
@@ -296,6 +259,7 @@ class EmbedderStack(Stack):
             role=role,
             timeout=Duration.seconds(30),
             memory_size=256,
+            log_retention=logs.RetentionDays.THREE_DAYS,  # Auto-delete logs after 3 days
         )
 
     def _create_store_embeddings_lambda(
@@ -311,6 +275,7 @@ class EmbedderStack(Stack):
             role=role,
             timeout=Duration.minutes(15),
             memory_size=2048,  # Need memory for numpy operations
+            log_retention=logs.RetentionDays.THREE_DAYS,  # Auto-delete logs after 3 days
             environment={
                 "VECTOR_BUCKET": self.vector_bucket.bucket_name,
                 "EMBEDDING_DIMENSIONS": ",".join(
@@ -330,7 +295,86 @@ class EmbedderStack(Stack):
             output_path="$.Payload",
         )
 
-        # Task: Check job status
+        # Check if this is a PDF with multiple pages
+        is_pdf_check = sfn.Choice(self, "IsPDF?")
+
+        # For PDFs: Process all pages in parallel using Map state
+        # Map state iterates over pdfPages array
+        
+        # Task: Check job status (for use in Map)
+        check_status_task_map = tasks.LambdaInvoke(
+            self,
+            "CheckJobStatusMap",
+            lambda_function=self.check_status_lambda,
+            output_path="$.Payload",
+        )
+
+        # Wait state for Map (30 seconds between status checks)
+        wait_state_map = sfn.Wait(
+            self,
+            "WaitForJobMap",
+            time=sfn.WaitTime.duration(Duration.seconds(30)),
+        )
+
+        # Task: Store embeddings (for use in Map)
+        store_task_map = tasks.LambdaInvoke(
+            self,
+            "StoreEmbeddingsMap",
+            lambda_function=self.store_embeddings_lambda,
+            output_path="$.Payload",
+        )
+
+        # Success state for individual page
+        page_success = sfn.Succeed(self, "PageComplete")
+
+        # Failure state for individual page
+        page_failure = sfn.Fail(
+            self,
+            "PageFailed",
+            cause="Page processing failed",
+            error="PageJobFailed",
+        )
+
+        # Storage check for individual page
+        page_storage_check = sfn.Choice(self, "PageStorageSucceeded?")
+        page_storage_check.when(
+            sfn.Condition.string_equals("$.status", "SUCCESS"),
+            page_success
+        ).otherwise(page_failure)
+
+        # Define page processing workflow (used in Map)
+        page_workflow = (
+            wait_state_map
+            .next(check_status_task_map)
+            .next(
+                sfn.Choice(self, "PageJobComplete?")
+                .when(
+                    sfn.Condition.string_equals("$.status", "COMPLETED"),
+                    store_task_map.next(page_storage_check),
+                )
+                .when(
+                    sfn.Condition.string_equals("$.status", "FAILED"),
+                    page_failure,
+                )
+                .otherwise(wait_state_map)
+            )
+        )
+
+        # Map state to process all PDF pages in parallel
+        pdf_map_state = sfn.Map(
+            self,
+            "ProcessAllPages",
+            items_path="$.pdfPages",
+            max_concurrency=10,  # Process up to 10 pages concurrently
+        )
+        pdf_map_state.iterator(page_workflow)
+
+        # Success state for PDF (all pages complete)
+        pdf_success = sfn.Succeed(self, "AllPagesComplete")
+
+        # For non-PDFs: Use original single-job workflow
+        
+        # Task: Check job status (for single files)
         check_status_task = tasks.LambdaInvoke(
             self,
             "CheckJobStatus",
@@ -371,9 +415,9 @@ class EmbedderStack(Stack):
             success_state
         ).otherwise(failure_state)
 
-        # Define the workflow
-        definition = (
-            process_task.next(wait_state)
+        # Single file workflow
+        single_file_workflow = (
+            wait_state
             .next(check_status_task)
             .next(
                 sfn.Choice(self, "JobComplete?")
@@ -388,6 +432,15 @@ class EmbedderStack(Stack):
                 .otherwise(wait_state)
             )
         )
+
+        # Main workflow: Check if PDF, then branch
+        is_pdf_check.when(
+            sfn.Condition.is_present("$.pdfPages"),
+            pdf_map_state.next(pdf_success)
+        ).otherwise(single_file_workflow)
+
+        # Define the complete workflow
+        definition = process_task.next(is_pdf_check)
 
         return sfn.StateMachine(
             self,
@@ -420,9 +473,9 @@ def handler(event, context):
         # URL-decode the key (S3 events URL-encode special characters)
         key = unquote_plus(key)
         
-        # Skip temporary PDF conversion files to avoid infinite loop
-        if key.startswith('pdf-temp/'):
-            print(f"Skipping temporary PDF file: {{key}}")
+        # Skip PDF page images to avoid infinite loop (these are derived from PDFs)
+        if key.startswith('pdf-pages/'):
+            print(f"Skipping PDF page image: {{key}}")
             continue
         
         # Start state machine execution
@@ -438,6 +491,7 @@ def handler(event, context):
 """
             ),
             timeout=Duration.seconds(30),
+            log_retention=logs.RetentionDays.THREE_DAYS,  # Auto-delete logs after 3 days
         )
 
         # Grant permissions

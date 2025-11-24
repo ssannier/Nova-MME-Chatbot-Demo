@@ -38,7 +38,37 @@ cdk deploy NovaMMEChatbotStack
 
 The script will update the existing secret and redeploy Amplify with the new token.
 
-### 3. Deploy Backend (AWS)
+### 3. Create S3 Vector Bucket and Indexes
+
+**IMPORTANT**: This must be done BEFORE deploying the CDK stacks.
+
+S3 Vector buckets cannot be created via CDK, so we create them manually:
+
+```bash
+# Windows
+scripts\setup-s3-vectors.bat dev
+
+# Linux/Mac
+chmod +x scripts/setup-s3-vectors.sh
+./scripts/setup-s3-vectors.sh dev
+```
+
+This creates:
+- S3 Vector bucket: `nova-mme-demo-embeddings-dev`
+- 4 vector indexes:
+  - `embeddings-256d` (dimension: 256, data-type: float32)
+  - `embeddings-384d` (dimension: 384, data-type: float32)
+  - `embeddings-1024d` (dimension: 1024, data-type: float32)
+  - `embeddings-3072d` (dimension: 3072, data-type: float32)
+
+**Verify it worked:**
+```bash
+aws s3vectors list-indexes --vector-bucket-name nova-mme-demo-embeddings-dev --region us-east-1
+```
+
+You should see all 4 indexes listed with status `ACTIVE`.
+
+### 4. Deploy Backend (AWS)
 
 ```bash
 # Install CDK dependencies
@@ -61,7 +91,7 @@ NovaMMEChatbotStack.ApiEndpoint = https://abc123xyz.execute-api.us-east-1.amazon
 NovaMMEChatbotStack.AmplifyAppUrl = https://main.d1234abcd.amplifyapp.com
 ```
 
-### 3a. Trigger Initial Amplify Build
+### 4a. Trigger Initial Amplify Build
 
 After first deployment, Amplify needs a manual trigger to start the first build:
 
@@ -90,7 +120,7 @@ git push origin main
 aws amplify list-jobs --app-id YOUR_APP_ID --branch-name main --region us-east-1
 ```
 
-### 4. (Optional) Run Frontend Locally
+### 5. (Optional) Run Frontend Locally
 
 The frontend is already deployed to Amplify, but if you want to run it locally:
 
@@ -108,7 +138,7 @@ npm run dev
 
 Visit: `http://localhost:3000`
 
-### 5. Upload Test Files
+### 6. Upload Test Files
 
 ```bash
 # Upload sample files to trigger embeddings
@@ -120,7 +150,7 @@ aws s3 cp test-document.txt s3://cic-multimedia-test/
 
 Monitor Step Functions execution in AWS Console to see embeddings being generated.
 
-### 6. Test the Chatbot
+### 7. Test the Chatbot
 
 Visit your Amplify URL (from step 3 output) and try queries like:
 - "What videos do we have?"
@@ -226,10 +256,30 @@ After the first build completes, all future pushes to `main` will auto-trigger b
 - Check browser console for errors
 - Verify environment variable in Amplify Console: App settings → Environment variables
 
+### S3 Vector Bucket Issues
+
+**Indexes not created:**
+```bash
+# Verify bucket exists
+aws s3vectors describe-vector-bucket --vector-bucket-name nova-mme-demo-embeddings-dev --region us-east-1
+
+# List indexes
+aws s3vectors list-indexes --vector-bucket-name nova-mme-demo-embeddings-dev --region us-east-1
+
+# If empty, run setup script again
+scripts\setup-s3-vectors.bat dev
+```
+
+**Common issues:**
+- Distance metric must be lowercase: `cosine` not `COSINE`
+- Data type is required: `--data-type float32`
+- Bucket must be created with `aws s3vectors create-vector-bucket`, not regular S3
+
 ### No search results
 - Verify embeddings were created (check S3 Vector bucket)
 - Check Lambda logs in CloudWatch
 - Ensure files were uploaded to source bucket
+- Verify vector indexes exist: `aws s3vectors list-indexes --vector-bucket-name nova-mme-demo-embeddings-dev --region us-east-1`
 
 ### Lambda timeout
 - Increase timeout in `chatbot_stack.py` (currently 60s)
