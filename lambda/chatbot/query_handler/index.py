@@ -377,10 +377,12 @@ def format_prompt(query: str, sources: List[Dict[str, Any]]) -> str:
         # For images, provide description
         elif modality == 'IMAGE':
             # Check if this is a PDF page (converted to image)
-            is_pdf = metadata.get('isPdf', False)
+            is_pdf_str = metadata.get('isPdf', 'False')
+            is_pdf = str(is_pdf_str).lower() == 'true'
             page_num = metadata.get('processedPage')
             
             if is_pdf and page_num is not None:
+                page_num = int(page_num)
                 source_context += f"\n[PDF document - Page {page_num}]"
                 source_context += f"\nThis page was semantically matched to your query based on its visual and textual content."
                 source_context += f"\nThe page likely contains relevant information about your question."
@@ -391,17 +393,17 @@ def format_prompt(query: str, sources: List[Dict[str, Any]]) -> str:
         
         # For video, provide segment info
         elif modality == 'VIDEO':
-            segment_idx = metadata.get('segmentIndex', 0)
-            start_time = metadata.get('segmentStartSeconds', 0)
-            end_time = metadata.get('segmentEndSeconds', 0)
+            segment_idx = int(metadata.get('segmentIndex', 0))
+            start_time = float(metadata.get('segmentStartSeconds', 0))
+            end_time = float(metadata.get('segmentEndSeconds', 0))
             source_context += f"\n[Video segment {segment_idx}: {start_time:.1f}s - {end_time:.1f}s]"
             source_context += f"\nLocation: {source_uri}"
         
         # For audio, provide segment info
         elif modality == 'AUDIO':
-            segment_idx = metadata.get('segmentIndex', 0)
-            start_time = metadata.get('segmentStartSeconds', 0)
-            end_time = metadata.get('segmentEndSeconds', 0)
+            segment_idx = int(metadata.get('segmentIndex', 0))
+            start_time = float(metadata.get('segmentStartSeconds', 0))
+            end_time = float(metadata.get('segmentEndSeconds', 0))
             source_context += f"\n[Audio segment {segment_idx}: {start_time:.1f}s - {end_time:.1f}s]"
             source_context += f"\nLocation: {source_uri}"
         
@@ -460,6 +462,9 @@ def get_text_content(source_uri: str, metadata: Dict[str, Any]) -> str:
         end_char = metadata.get('segmentEndCharPosition')
         
         if start_char is not None and end_char is not None:
+            # Convert to int (S3 Vectors stores metadata as strings)
+            start_char = int(start_char)
+            end_char = int(end_char)
             content = full_content[start_char:end_char]
         else:
             content = full_content
@@ -494,8 +499,11 @@ def prepare_multimodal_content(query: str, sources: List[Dict[str, Any]]) -> Lis
         
         # For images (including PDF pages), fetch and encode
         if modality == 'IMAGE':
-            is_pdf = metadata.get('isPdf', False)
+            is_pdf_str = metadata.get('isPdf', 'False')
+            is_pdf = str(is_pdf_str).lower() == 'true'
             page_num = metadata.get('processedPage')
+            if page_num is not None:
+                page_num = int(page_num)
             
             # Fetch image from S3
             image_data = fetch_image_from_s3(source_uri)
@@ -533,9 +541,9 @@ def prepare_multimodal_content(query: str, sources: List[Dict[str, Any]]) -> Lis
         
         # For video/audio, include metadata
         elif modality in ['VIDEO', 'AUDIO']:
-            segment_idx = metadata.get('segmentIndex', 0)
-            start_time = metadata.get('segmentStartSeconds', 0)
-            end_time = metadata.get('segmentEndSeconds', 0)
+            segment_idx = int(metadata.get('segmentIndex', 0))
+            start_time = float(metadata.get('segmentStartSeconds', 0))
+            end_time = float(metadata.get('segmentEndSeconds', 0))
             text_context_parts.append(
                 f"{modality} Source - {filename} (segment {segment_idx}: {start_time:.1f}s - {end_time:.1f}s)"
             )
@@ -665,15 +673,18 @@ def format_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         location_info = []
         
         # For PDFs (processed as images), show page number
-        if metadata.get('isPdf') or (modality == 'IMAGE' and 'processedPage' in metadata):
+        is_pdf_str = metadata.get('isPdf', 'False')
+        is_pdf = str(is_pdf_str).lower() == 'true'
+        if is_pdf or (modality == 'IMAGE' and 'processedPage' in metadata):
             page = metadata.get('processedPage')
             if page is not None:
+                page = int(page)
                 location_info.append(f"Page {page}")
         
         # For video/audio, show timestamp
         elif modality in ['VIDEO', 'AUDIO'] and 'segmentStartSeconds' in metadata:
-            start = metadata['segmentStartSeconds']
-            end = metadata.get('segmentEndSeconds', start)
+            start = float(metadata['segmentStartSeconds'])
+            end = float(metadata.get('segmentEndSeconds', start))
             # Format as MM:SS
             start_min = int(start // 60)
             start_sec = int(start % 60)
@@ -683,8 +694,8 @@ def format_sources(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         
         # For text files, show character range if available
         elif modality == 'TEXT' and 'segmentStartCharPosition' in metadata:
-            start = metadata['segmentStartCharPosition']
-            end = metadata.get('segmentEndCharPosition', start)
+            start = int(metadata['segmentStartCharPosition'])
+            end = int(metadata.get('segmentEndCharPosition', start))
             # Show as approximate line numbers (assuming ~80 chars per line)
             start_line = start // 80 + 1
             end_line = end // 80 + 1

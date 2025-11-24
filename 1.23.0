@@ -1,0 +1,5 @@
+Collecting PyMuPDF
+  Using cached pymupdf-1.26.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (3.4 kB)
+Using cached pymupdf-1.26.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (24.1 MB)
+Installing collected packages: PyMuPDF
+Successfully installed PyMuPDF-1.26.0

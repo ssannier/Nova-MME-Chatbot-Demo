@@ -68,7 +68,25 @@ aws s3vectors list-indexes --vector-bucket-name nova-mme-demo-embeddings-dev --r
 
 You should see all 4 indexes listed with status `ACTIVE`.
 
-### 4. Deploy Backend (AWS)
+### 4. Install Lambda Layer Dependencies
+
+Lambda Layers contain the Python packages needed by the Lambda functions. Install them locally:
+
+```bash
+# Windows
+scripts\install-lambda-layers.bat
+
+# Linux/Mac
+chmod +x scripts/install-lambda-layers.sh
+./scripts/install-lambda-layers.sh
+```
+
+This installs:
+- **PyMuPDF** - For PDF to image conversion
+- **python-docx** - For DOCX text extraction
+- **NumPy** - For MRL truncation and normalization
+
+### 5. Deploy Backend (AWS)
 
 ```bash
 # Install CDK dependencies
@@ -91,7 +109,7 @@ NovaMMEChatbotStack.ApiEndpoint = https://abc123xyz.execute-api.us-east-1.amazon
 NovaMMEChatbotStack.AmplifyAppUrl = https://main.d1234abcd.amplifyapp.com
 ```
 
-### 4a. Trigger Initial Amplify Build
+### 5a. Trigger Initial Amplify Build
 
 After first deployment, Amplify needs a manual trigger to start the first build:
 
@@ -120,7 +138,7 @@ git push origin main
 aws amplify list-jobs --app-id YOUR_APP_ID --branch-name main --region us-east-1
 ```
 
-### 5. (Optional) Run Frontend Locally
+### 6. (Optional) Run Frontend Locally
 
 The frontend is already deployed to Amplify, but if you want to run it locally:
 
@@ -138,7 +156,7 @@ npm run dev
 
 Visit: `http://localhost:3000`
 
-### 6. Upload Test Files
+### 7. Upload Test Files
 
 ```bash
 # Upload sample files to trigger embeddings
@@ -150,7 +168,7 @@ aws s3 cp test-document.txt s3://cic-multimedia-test/
 
 Monitor Step Functions execution in AWS Console to see embeddings being generated.
 
-### 7. Test the Chatbot
+### 8. Test the Chatbot
 
 Visit your Amplify URL (from step 3 output) and try queries like:
 - "What videos do we have?"

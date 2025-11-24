@@ -13,7 +13,6 @@ from aws_cdk import (
     Stack,
     Duration,
     RemovalPolicy,
-    BundlingOptions,
     aws_s3 as s3,
     aws_lambda as lambda_,
     aws_iam as iam,
@@ -215,12 +214,31 @@ class EmbedderStack(Stack):
         self, role: iam.Role, config: dict
     ) -> lambda_.Function:
         """Create Lambda 1: Nova MME Processor"""
+        
+        # Create Lambda Layers for PDF and DOCX processing
+        pymupdf_layer = lambda_.LayerVersion(
+            self,
+            "PyMuPDFLayer",
+            code=lambda_.Code.from_asset("lambda/layers/pdf-processing"),
+            compatible_runtimes=[lambda_.Runtime.PYTHON_3_11],
+            description="PyMuPDF for PDF to image conversion",
+        )
+        
+        docx_layer = lambda_.LayerVersion(
+            self,
+            "DocxLayer",
+            code=lambda_.Code.from_asset("lambda/layers/docx-processing"),
+            compatible_runtimes=[lambda_.Runtime.PYTHON_3_11],
+            description="python-docx for DOCX text extraction",
+        )
+        
         return lambda_.Function(
             self,
             "ProcessorFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="index.handler",
             code=lambda_.Code.from_asset("lambda/embedder/processor"),
+            layers=[pymupdf_layer, docx_layer],
             role=role,
             timeout=Duration.minutes(5),
             memory_size=1024,  # Increased for PDF processing
@@ -253,12 +271,23 @@ class EmbedderStack(Stack):
         self, role: iam.Role, config: dict
     ) -> lambda_.Function:
         """Create Lambda 3: Store Embeddings with MRL truncation"""
+        
+        # Create Lambda Layer for NumPy
+        numpy_layer = lambda_.LayerVersion(
+            self,
+            "NumpyLayer",
+            code=lambda_.Code.from_asset("lambda/layers/numpy"),
+            compatible_runtimes=[lambda_.Runtime.PYTHON_3_11],
+            description="NumPy for MRL truncation and normalization",
+        )
+        
         return lambda_.Function(
             self,
             "StoreEmbeddingsFunction",
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="index.handler",
             code=lambda_.Code.from_asset("lambda/embedder/store_embeddings"),
+            layers=[numpy_layer],
             role=role,
             timeout=Duration.minutes(15),
             memory_size=2048,  # Need memory for numpy operations

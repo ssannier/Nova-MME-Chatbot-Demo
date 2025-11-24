@@ -9,6 +9,10 @@ dist/
 build/
 *.egg
 
+# Lambda Layers (installed packages, but keep structure)
+lambda/layers/*/python/*
+!lambda/layers/*/python/.gitkeep
+
 # Virtual environments
 venv/
 env/
