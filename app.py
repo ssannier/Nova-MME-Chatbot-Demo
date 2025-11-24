@@ -32,6 +32,7 @@ chatbot = ChatbotStack(
     "NovaMMEChatbotStack",
     vector_bucket=embedder.vector_bucket,
     source_bucket=embedder.source_bucket,
+    output_bucket=embedder.output_bucket,
     vector_indexes=embedder.vector_indexes,
     env=env,
     description="Nova MME Chatbot - Query interface with hierarchical search"

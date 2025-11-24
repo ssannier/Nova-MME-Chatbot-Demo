@@ -70,6 +70,8 @@ class EmbedderStack(Stack):
         }
 
         # Create S3 bucket for async job outputs
+        # Note: pdf-pages/ and docx-text/ are kept permanently for chatbot access
+        # Only the Nova MME async output folders (with invocation IDs) are auto-deleted
         self.output_bucket = s3.Bucket(
             self,
             "OutputBucket",
@@ -77,13 +79,6 @@ class EmbedderStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
             versioned=False,
-            lifecycle_rules=[
-                s3.LifecycleRule(
-                    id="DeleteAsyncOutputs",
-                    expiration=Duration.days(1),
-                    enabled=True,
-                )
-            ],
         )
 
         # Create IAM role for Lambda functions with Bedrock access
@@ -489,9 +484,12 @@ def handler(event, context):
         # URL-decode the key (S3 events URL-encode special characters)
         key = unquote_plus(key)
         
-        # Skip PDF page images to avoid infinite loop (these are derived from PDFs)
+        # Skip derived files to avoid infinite loop
         if key.startswith('pdf-pages/'):
             print(f"Skipping PDF page image: {{key}}")
+            continue
+        if key.startswith('docx-text/'):
+            print(f"Skipping extracted DOCX text: {{key}}")
             continue
         
         # Start state machine execution

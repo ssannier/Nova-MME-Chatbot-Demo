@@ -64,3 +64,6 @@ logs/
 # Temp files
 nul
 sts get-caller-identity
+
+# Accidental pip output files
+1.*.0

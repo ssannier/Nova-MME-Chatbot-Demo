@@ -90,6 +90,16 @@
 
 ## 🔧 Before Demo/Production
 
+- [ ] **Refactor PDF processing to avoid rate limiting**
+  - **Current issue:** Processor Lambda starts async invocations for all PDF pages immediately in a tight loop, causing Bedrock throttling for PDFs with 5+ pages
+  - **Quick fix (implemented):** Added 500ms delay between page invocations
+  - **Long-term solution:** Move async invocation logic from Processor Lambda to Step Functions
+    - Processor Lambda should only convert PDF to images and return page list
+    - Step Functions Map state should handle starting async invocations with built-in rate limiting
+    - This provides better control, retry logic, and avoids Lambda timeout issues
+  - **Alternative:** Batch multiple pages per invocation (Nova MME supports multiple images)
+  - See: `lambda/embedder/processor/index.py` lines 161-173
+
 - [ ] **Update to Claude 4.5 Sonnet** in `config/prod.json`
   - Model ID: `anthropic.claude-4-5-sonnet-20250514-v1:0` (verify latest ID in Bedrock console)
   - Just released to Bedrock - should provide better responses

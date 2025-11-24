@@ -31,6 +31,7 @@ class ChatbotStack(Stack):
         construct_id: str,
         vector_bucket: s3.Bucket,
         source_bucket: s3.Bucket,
+        output_bucket: s3.Bucket,
         vector_indexes: dict,
         **kwargs,
     ) -> None:
@@ -38,6 +39,7 @@ class ChatbotStack(Stack):
 
         self.vector_bucket = vector_bucket
         self.source_bucket = source_bucket
+        self.output_bucket = output_bucket
         self.vector_indexes = vector_indexes
 
         # Load configuration
@@ -158,6 +160,17 @@ class ChatbotStack(Stack):
                 resources=[
                     self.source_bucket.bucket_arn,
                     f"{self.source_bucket.bucket_arn}/*",
+                ],
+            )
+        )
+        
+        # S3 read permissions for output bucket (to retrieve PDF page images and DOCX text)
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:GetObject", "s3:ListBucket"],
+                resources=[
+                    self.output_bucket.bucket_arn,
+                    f"{self.output_bucket.bucket_arn}/*",
                 ],
             )
         )

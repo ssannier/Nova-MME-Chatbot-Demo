@@ -102,24 +102,24 @@ def handler(event, context):
             text_content = extract_docx_text(local_path)
             print(f"Extracted {len(text_content)} characters from document")
             
-            # Upload extracted text to temp location
+            # Upload extracted text to output bucket (not source bucket to avoid re-triggering)
             text_key = f"docx-text/{metadata['objectId']}.txt"
             s3_client.put_object(
-                Bucket=bucket,
+                Bucket=OUTPUT_BUCKET,
                 Key=text_key,
                 Body=text_content.encode('utf-8'),
                 ContentType='text/plain'
             )
-            print(f"Uploaded extracted text to s3://{bucket}/{text_key}")
+            print(f"Uploaded extracted text to s3://{OUTPUT_BUCKET}/{text_key}")
             
             # Update metadata to point to text file
             metadata['originalDocUri'] = metadata['sourceS3Uri']
-            metadata['sourceS3Uri'] = f"s3://{bucket}/{text_key}"
+            metadata['sourceS3Uri'] = f"s3://{OUTPUT_BUCKET}/{text_key}"
             metadata['isDocx'] = True
             metadata['originalFileName'] = metadata['fileName']
             
-            # Process as text
-            model_input = create_model_input(bucket, text_key, '.txt')
+            # Process as text (from output bucket)
+            model_input = create_model_input(OUTPUT_BUCKET, text_key, '.txt')
             print(f"Created model input for extracted text")
             
             # Start async invocation
@@ -145,9 +145,9 @@ def handler(event, context):
             pdf_pages = []
             
             for page_num, image_uri in enumerate(image_uris, start=1):
-                # Create model input for this page
-                image_key = image_uri.replace(f"s3://{bucket}/", "")
-                model_input = create_model_input(bucket, image_key, '.png')
+                # Create model input for this page (images are in OUTPUT_BUCKET)
+                image_key = image_uri.replace(f"s3://{OUTPUT_BUCKET}/", "")
+                model_input = create_model_input(OUTPUT_BUCKET, image_key, '.png')
                 model_input['segmentedEmbeddingParams']['image']['detailLevel'] = 'DOCUMENT_IMAGE'
                 
                 # Create page-specific metadata
@@ -167,6 +167,12 @@ def handler(event, context):
                     'outputS3Uri': output_s3_uri,
                     'metadata': page_metadata
                 })
+                
+                # Add delay to avoid Bedrock rate limiting (quick fix)
+                # TODO: Long-term, move invocation logic to Step Functions for proper rate limiting
+                if page_num < len(image_uris):  # Don't delay after last page
+                    import time
+                    time.sleep(1.0)  # 1 second delay between pages (increased from 500ms)
             
             # Return all pages - Step Functions will need to process each
             # For now, return first page in standard format for compatibility
@@ -373,16 +379,17 @@ def convert_pdf_to_images(bucket: str, key: str, object_id: str) -> List[str]:
             # Convert to PNG bytes
             img_bytes = pix.tobytes("png")
             
-            # Upload to S3 in a permanent location (needed for chatbot to fetch later)
+            # Upload to output bucket (not source bucket to avoid re-triggering)
+            # Note: Chatbot needs read access to output bucket to fetch these images
             image_key = f"pdf-pages/{object_id}/page_{page_num + 1}.png"
             s3_client.put_object(
-                Bucket=bucket,
+                Bucket=OUTPUT_BUCKET,
                 Key=image_key,
                 Body=img_bytes,
                 ContentType='image/png'
             )
             
-            image_uris.append(f"s3://{bucket}/{image_key}")
+            image_uris.append(f"s3://{OUTPUT_BUCKET}/{image_key}")
             print(f"Converted PDF page {page_num + 1} to {image_key}")
         
         pdf_document.close()
